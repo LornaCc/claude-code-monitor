@@ -1,0 +1,15 @@
+**/bin/
+**/obj/
+.vs/
+.idea/
+.vscode/
+.agents/
+.dotnet_home/
+.nuget_packages/
+artifacts/
+node_modules/
+*.user
+*.suo
+*.vsix
+*.zip
+*.pdb

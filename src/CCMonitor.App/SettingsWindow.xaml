@@ -1,0 +1,46 @@
+<Window x:Class="CCMonitor.App.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="CC Monitor Settings"
+        Width="380"
+        Height="470"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="#F8FAFC">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <Border Margin="18">
+            <StackPanel>
+            <TextBlock Text="General" FontWeight="SemiBold" Foreground="#0F172A" Margin="0,0,0,8" />
+            <CheckBox x:Name="AlwaysOnTopBox" Content="Always on top" Margin="0,0,0,6" />
+            <CheckBox x:Name="NotificationsBox" Content="Windows notifications" Margin="0,0,0,16" />
+
+            <TextBlock Text="Notifications" FontWeight="SemiBold" Foreground="#0F172A" Margin="0,0,0,8" />
+            <CheckBox x:Name="BlockedSoundBox" Content="Sound when permission is required" Margin="0,0,0,6" />
+            <CheckBox x:Name="DoneSoundBox" Content="Sound when task finishes" Margin="0,0,0,6" />
+            <CheckBox x:Name="ErrorSoundBox" Content="Sound when task fails" Margin="0,0,0,16" />
+
+            <TextBlock Text="Privacy" FontWeight="SemiBold" Foreground="#0F172A" Margin="0,0,0,8" />
+            <CheckBox x:Name="PromptPreviewBox" Content="Save prompt preview" Margin="0,0,0,16" />
+
+            <TextBlock Text="Sessions" FontWeight="SemiBold" Foreground="#0F172A" Margin="0,0,0,8" />
+            <DockPanel Margin="0,0,0,16">
+                <TextBlock Text="Keep closed sessions for" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <TextBox x:Name="RetentionBox" Width="52" Height="26" VerticalContentAlignment="Center" />
+                <TextBlock Text="hours" VerticalAlignment="Center" Margin="8,0,0,0" />
+            </DockPanel>
+
+            <TextBlock Text="Claude Code Integration" FontWeight="SemiBold" Foreground="#0F172A" Margin="0,0,0,8" />
+            <TextBlock x:Name="HooksStatusText" Foreground="#64748B" FontSize="12" Margin="0,0,0,8" />
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
+                <Button Content="Reinstall Hooks" Width="120" Height="32" Margin="0,0,8,0" Click="Reinstall_Click" />
+                <Button Content="Uninstall Hooks" Width="120" Height="32" Click="Uninstall_Click" />
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Cancel" Width="86" Height="32" Margin="0,0,8,0" Click="Cancel_Click" />
+                <Button Content="Save" Width="86" Height="32" Click="Save_Click" />
+            </StackPanel>
+            </StackPanel>
+        </Border>
+    </ScrollViewer>
+</Window>
