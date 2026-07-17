@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace CCMonitor.App;
 
@@ -8,35 +9,49 @@ public static class VsCodeWindowActivator
 {
     private const int SwRestore = 9;
 
-    public static bool TryActivate(string workingDirectory, string projectName, out string matchedTitle)
+    public static VsCodeWindowActivationResult TryActivate(string workingDirectory, string projectName)
     {
-        matchedTitle = "";
-        var candidates = BuildCandidates(workingDirectory, projectName).ToList();
+        var candidates = BuildCandidates(workingDirectory, projectName)
+            .Where(candidate => candidate.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
         if (candidates.Count == 0)
         {
-            return false;
+            return new VsCodeWindowActivationResult(false, "", "No project title candidates were available.", 0);
         }
 
-        var windows = Process.GetProcessesByName("Code")
-            .Where(process => process.MainWindowHandle != IntPtr.Zero && !string.IsNullOrWhiteSpace(process.MainWindowTitle))
-            .Select(process => new CodeWindow(process.MainWindowHandle, process.MainWindowTitle))
+        var windows = EnumerateCodeWindows();
+
+        var matches = windows
+            .Where(window => IsMatch(window.Title, candidates))
             .ToList();
-
-        var match = windows.FirstOrDefault(window => IsMatch(window.Title, candidates));
-        if (match.Handle == IntPtr.Zero)
+        if (matches.Count == 0)
         {
-            match = windows.FirstOrDefault(window => window.Title.Contains("Visual Studio Code", StringComparison.OrdinalIgnoreCase));
+            return new VsCodeWindowActivationResult(
+                false,
+                "",
+                $"No VS Code window title matched project={projectName}.",
+                windows.Count);
         }
 
-        if (match.Handle == IntPtr.Zero)
+        if (matches.Count > 1)
         {
-            return false;
+            return new VsCodeWindowActivationResult(
+                false,
+                "",
+                $"Multiple VS Code window titles matched project={projectName}.",
+                matches.Count);
         }
 
-        matchedTitle = match.Title;
+        var match = matches[0];
         ShowWindow(match.Handle, SwRestore);
         BringWindowToTop(match.Handle);
-        return SetForegroundWindow(match.Handle);
+        var activated = SetForegroundWindow(match.Handle);
+        return new VsCodeWindowActivationResult(
+            activated,
+            match.Title,
+            activated ? "Matched a unique VS Code window title." : "Windows rejected foreground activation.",
+            1);
     }
 
     private static IEnumerable<string> BuildCandidates(string workingDirectory, string projectName)
@@ -58,14 +73,77 @@ public static class VsCodeWindowActivator
 
     private static bool IsMatch(string title, IReadOnlyCollection<string> candidates)
     {
-        var normalizedTitle = Normalize(title);
-        return candidates.Any(candidate => candidate.Length > 0 && normalizedTitle.Contains(candidate, StringComparison.OrdinalIgnoreCase));
+        var titleSegments = title
+            .Split(
+                [" - ", " \u2013 ", " \u2014 ", " | "],
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(Normalize)
+            .Where(segment => segment.Length > 0)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return candidates.Any(candidate =>
+            candidate.Length >= 3
+            && titleSegments.Contains(candidate));
+    }
+
+    private static IReadOnlyList<CodeWindow> EnumerateCodeWindows()
+    {
+        var windows = new List<CodeWindow>();
+        EnumWindows((handle, _) =>
+        {
+            if (!IsWindowVisible(handle)) return true;
+
+            var titleLength = GetWindowTextLength(handle);
+            if (titleLength <= 0) return true;
+
+            GetWindowThreadProcessId(handle, out var processId);
+            try
+            {
+                using var process = Process.GetProcessById((int)processId);
+                if (!string.Equals(process.ProcessName, "Code", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+                return true;
+            }
+
+            var title = new StringBuilder(titleLength + 1);
+            if (GetWindowText(handle, title, title.Capacity) > 0)
+            {
+                windows.Add(new CodeWindow(handle, title.ToString()));
+            }
+
+            return true;
+        }, IntPtr.Zero);
+        return windows;
     }
 
     private static string Normalize(string value)
         => new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
 
     private readonly record struct CodeWindow(IntPtr Handle, string Title);
+
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int maxCount);
+
+    [DllImport("user32.dll")]
+    private static extern int GetWindowTextLength(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
     [DllImport("user32.dll")]
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
@@ -76,3 +154,9 @@ public static class VsCodeWindowActivator
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
 }
+
+public sealed record VsCodeWindowActivationResult(
+    bool Activated,
+    string MatchedTitle,
+    string Reason,
+    int CandidateCount);

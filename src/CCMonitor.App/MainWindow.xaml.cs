@@ -117,7 +117,7 @@ public partial class MainWindow : Window
         var removedIds = _visibilityStore.LoadRemoved().Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var states = (await _stateStore.LoadAllAsync())
             .Where(s => s.Status != ClaudeSessionStatus.Closed && !removedIds.Contains(s.SessionId))
-            .OrderByDescending(s => StatusPriority(s.Status))
+            .OrderByDescending(s => StatusPriority(GetDisplayStatus(s)))
             .ThenByDescending(s => s.UpdatedAt)
             .ToList();
 
@@ -144,7 +144,10 @@ public partial class MainWindow : Window
             var existing = target.FirstOrDefault(s => s.SessionId == state.SessionId);
             if (existing is null)
             {
-                target.Add(new SessionCardViewModel(state, GetCustomSessionName(state.SessionId)));
+                target.Add(new SessionCardViewModel(
+                    state,
+                    GetCustomSessionName(state.SessionId),
+                    TimeSpan.FromMinutes(Math.Max(1, _config.StaleSessionMinutes))));
             }
             else
             {
@@ -344,29 +347,67 @@ public partial class MainWindow : Window
         try
         {
             HooksStatusText.Text = $"Finding terminal: {session.ProjectName}";
-            var terminalFocusTask = _terminalBridge.RequestFocusAsync(
+            var terminalResult = await _terminalBridge.RequestFocusAsync(
                 session.SessionId,
-                session.TerminalProcessId,
+                session.TerminalToken,
                 session.WorkingDirectory,
                 session.ProjectName);
 
-            var windowFocused = VsCodeWindowActivator.TryActivate(session.WorkingDirectory, session.ProjectName, out var matchedTitle);
-            var terminalResult = await terminalFocusTask;
+            _logger.Info(
+                $"terminal focus result session={session.SessionId} status={terminalResult.Status} " +
+                $"bridge={terminalResult.BridgeId} liveBridges={terminalResult.LiveBridgeCount} " +
+                $"terminalToken={ShortToken(session.TerminalToken)} " +
+                $"match={terminalResult.MatchKind} reason={terminalResult.Reason}");
 
-            if (terminalResult is not null)
+            if (terminalResult.Status == TerminalFocusStatus.Matched)
             {
-                HooksStatusText.Text = $"Focused terminal: {terminalResult.TerminalName}";
-                _logger.Info($"focused vscode terminal session={session.SessionId} pid={terminalResult.TerminalProcessId?.ToString() ?? "n/a"} match={terminalResult.MatchKind} terminal={terminalResult.TerminalName}");
+                var matchedWindowResult = VsCodeWindowActivator.TryActivate(
+                    session.WorkingDirectory,
+                    string.IsNullOrWhiteSpace(terminalResult.WorkspaceName)
+                        ? session.ProjectName
+                        : terminalResult.WorkspaceName);
+                HooksStatusText.Text = matchedWindowResult.Activated
+                    ? $"Focused terminal: {terminalResult.TerminalName}"
+                    : $"Selected terminal, but VS Code could not be brought forward: {session.ProjectName}";
+                _logger.Info(
+                    $"focused vscode terminal session={session.SessionId} " +
+                    $"pid={terminalResult.TerminalProcessId?.ToString() ?? "n/a"} " +
+                    $"bridge={terminalResult.BridgeId} workspace={terminalResult.WorkspaceName} " +
+                    $"match={terminalResult.MatchKind} terminal={terminalResult.TerminalName} " +
+                    $"windowActivated={matchedWindowResult.Activated} windowTitle={matchedWindowResult.MatchedTitle} " +
+                    $"windowReason={matchedWindowResult.Reason}");
+                return;
             }
-            else if (windowFocused)
+
+            var windowResult = VsCodeWindowActivator.TryActivate(session.WorkingDirectory, session.ProjectName);
+            if (windowResult.Activated)
             {
-                HooksStatusText.Text = $"Focused VS Code (terminal bridge unavailable): {session.ProjectName}";
-                _logger.Info($"focused vscode fallback session={session.SessionId} terminalPid={session.TerminalProcessId?.ToString() ?? "n/a"} title={matchedTitle}");
+                HooksStatusText.Text = terminalResult.MatchKind switch
+                {
+                    "ambiguousExactWorkingDirectory" or "ambiguousWorkingDirectory"
+                        => $"Multiple terminals match. Run “CC Monitor: Migrate Active Terminal” in VS Code.",
+                    "terminalTokenNotRegistered"
+                        => $"Managed terminal is not registered. Reload VS Code or restart Claude in a managed terminal.",
+                    _ when terminalResult.Status == TerminalFocusStatus.BridgeNotRunning
+                        => $"Focused VS Code window (Terminal Bridge not running): {session.ProjectName}",
+                    _ => $"Focused VS Code window; terminal not matched: {session.ProjectName}"
+                };
+                _logger.Info(
+                    $"focused vscode title fallback session={session.SessionId} " +
+                    $"bridgeStatus={terminalResult.Status} match={terminalResult.MatchKind} " +
+                    $"title={windowResult.MatchedTitle}");
             }
             else
             {
-                HooksStatusText.Text = $"VS Code window not found: {session.ProjectName}";
-                _logger.Info($"vscode window not found session={session.SessionId} project={session.ProjectName} cwd={session.WorkingDirectory}");
+                HooksStatusText.Text = terminalResult.Status switch
+                {
+                    TerminalFocusStatus.BridgeNotRunning => $"Terminal Bridge is not running: {session.ProjectName}",
+                    _ => $"Terminal not found: {session.ProjectName}"
+                };
+                _logger.Info(
+                    $"vscode focus unresolved session={session.SessionId} project={session.ProjectName} " +
+                    $"cwd={session.WorkingDirectory} bridgeStatus={terminalResult.Status} " +
+                    $"windowReason={windowResult.Reason} windowCandidates={windowResult.CandidateCount}");
             }
         }
         catch (Exception ex)
@@ -537,13 +578,23 @@ public partial class MainWindow : Window
         ClaudeSessionStatus.Running => 3,
         ClaudeSessionStatus.Done => 2,
         ClaudeSessionStatus.Idle => 1,
+        ClaudeSessionStatus.Stale => 1,
         _ => 0
     };
+
+    private ClaudeSessionStatus GetDisplayStatus(ClaudeSessionState state)
+        => state.Status is ClaudeSessionStatus.Running or ClaudeSessionStatus.Blocked
+            && DateTimeOffset.Now - state.UpdatedAt >= TimeSpan.FromMinutes(Math.Max(1, _config.StaleSessionMinutes))
+                ? ClaudeSessionStatus.Stale
+                : state.Status;
 
     private string? GetCustomSessionName(string sessionId)
         => _config.SessionNames.TryGetValue(sessionId, out var name) && !string.IsNullOrWhiteSpace(name)
             ? name
             : null;
+
+    private static string ShortToken(string token)
+        => string.IsNullOrWhiteSpace(token) ? "none" : token[..Math.Min(8, token.Length)];
 
     private void ApplySessionGrouping()
     {

@@ -31,8 +31,6 @@ public sealed class ClaudeSettingsMerger
             AddEntry(hooks, eventName, "", hookCommand);
         }
 
-        AddEntry(hooks, "Notification", "permission_prompt", hookCommand);
-        AddEntry(hooks, "Notification", "idle_prompt", hookCommand);
         AddEntry(hooks, "Notification", "", hookCommand);
         if (!string.IsNullOrWhiteSpace(statusLineCommand))
         {
@@ -86,8 +84,6 @@ public sealed class ClaudeSettingsMerger
         if (root["hooks"] is not JsonObject hooks) return false;
 
         var hooksInstalled = EventNames.All(e => ContainsCommand(hooks[e] as JsonArray, hookCommand))
-            && ContainsCommand(hooks["Notification"] as JsonArray, hookCommand, "permission_prompt")
-            && ContainsCommand(hooks["Notification"] as JsonArray, hookCommand, "idle_prompt")
             && ContainsCommand(hooks["Notification"] as JsonArray, hookCommand, "");
 
         if (!hooksInstalled) return false;

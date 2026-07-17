@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace CCMonitor.Core.HookEvents;
 
@@ -11,16 +13,42 @@ public sealed class HookEventParser
             return new HookEvent { Kind = HookEventKind.Unknown, RawEventName = "EmptyInput" };
         }
 
-        JsonDocument document;
-        try
+        var normalizedInput = input.Trim().TrimStart('\uFEFF', '\0');
+        if (TryParseDocument(normalizedInput, out var document, out var parseError))
         {
-            document = JsonDocument.Parse(input);
-        }
-        catch
-        {
-            return new HookEvent { Kind = HookEventKind.Unknown, RawEventName = "InvalidJson" };
+            return ParseDocument(document!, wasRecovered: false, parseError: null);
         }
 
+        var recoveryError = "No JSON object start was found.";
+        var firstObject = normalizedInput.IndexOf('{');
+        if (firstObject >= 0
+            && TryParseFirstJsonValue(normalizedInput[firstObject..], out document, out recoveryError))
+        {
+            return ParseDocument(
+                document!,
+                wasRecovered: true,
+                parseError: $"Exact JSON parse failed: {parseError}. Recovered first JSON value.");
+        }
+
+        if (TryRecoverEssentialFields(normalizedInput, out var recovered))
+        {
+            return recovered with
+            {
+                WasRecovered = true,
+                ParseError = $"JSON parse failed: {parseError}. Recovery parse failed: {recoveryError}."
+            };
+        }
+
+        return new HookEvent
+        {
+            Kind = HookEventKind.Unknown,
+            RawEventName = "InvalidJson",
+            ParseError = parseError
+        };
+    }
+
+    private static HookEvent ParseDocument(JsonDocument document, bool wasRecovered, string? parseError)
+    {
         var root = document.RootElement;
         var eventName = GetString(root, "hook_event_name")
             ?? GetString(root, "event_name")
@@ -54,8 +82,117 @@ public sealed class HookEventParser
             Prompt = prompt,
             ToolName = toolName,
             NotificationType = notificationType,
-            RawJson = document
+            RawJson = document,
+            WasRecovered = wasRecovered,
+            ParseError = parseError
         };
+    }
+
+    private static bool TryParseDocument(string input, out JsonDocument? document, out string error)
+    {
+        try
+        {
+            document = JsonDocument.Parse(input, new JsonDocumentOptions
+            {
+                AllowTrailingCommas = true,
+                CommentHandling = JsonCommentHandling.Skip
+            });
+            error = "";
+            return true;
+        }
+        catch (JsonException exception)
+        {
+            document = null;
+            error = CompactError(exception.Message);
+            return false;
+        }
+    }
+
+    private static bool TryParseFirstJsonValue(string input, out JsonDocument? document, out string error)
+    {
+        try
+        {
+            var bytes = Encoding.UTF8.GetBytes(input);
+            var reader = new Utf8JsonReader(bytes, new JsonReaderOptions
+            {
+                AllowTrailingCommas = true,
+                CommentHandling = JsonCommentHandling.Skip
+            });
+            document = JsonDocument.ParseValue(ref reader);
+            error = "";
+            return true;
+        }
+        catch (JsonException exception)
+        {
+            document = null;
+            error = CompactError(exception.Message);
+            return false;
+        }
+    }
+
+    private static bool TryRecoverEssentialFields(string input, out HookEvent recovered)
+    {
+        var eventName = ExtractJsonString(input, "hook_event_name")
+            ?? ExtractJsonString(input, "event_name")
+            ?? ExtractJsonString(input, "event")
+            ?? ExtractJsonString(input, "type");
+        var sessionId = ExtractJsonString(input, "session_id")
+            ?? ExtractJsonString(input, "sessionId")
+            ?? ExtractJsonString(input, "conversation_id");
+
+        if (string.IsNullOrWhiteSpace(eventName) || string.IsNullOrWhiteSpace(sessionId))
+        {
+            recovered = new HookEvent();
+            return false;
+        }
+
+        var notificationType = ExtractJsonString(input, "notification_type")
+            ?? ExtractJsonString(input, "notificationType")
+            ?? ExtractJsonString(input, "matcher")
+            ?? ExtractJsonString(input, "message");
+
+        recovered = new HookEvent
+        {
+            Kind = DetermineKind(eventName, notificationType),
+            RawEventName = eventName,
+            SessionId = sessionId,
+            WorkingDirectory = ExtractJsonString(input, "cwd")
+                ?? ExtractJsonString(input, "working_directory")
+                ?? ExtractJsonString(input, "workingDirectory"),
+            Prompt = ExtractJsonString(input, "prompt")
+                ?? ExtractJsonString(input, "user_prompt")
+                ?? ExtractJsonString(input, "message"),
+            ToolName = ExtractJsonString(input, "tool_name")
+                ?? ExtractJsonString(input, "toolName")
+                ?? ExtractJsonString(input, "tool"),
+            NotificationType = notificationType
+        };
+        return recovered.Kind != HookEventKind.Unknown;
+    }
+
+    private static string? ExtractJsonString(string input, string propertyName)
+    {
+        var match = Regex.Match(
+            input,
+            $"[\"']{Regex.Escape(propertyName)}[\"']\\s*:\\s*[\"'](?<value>(?:\\\\.|[^\"'])*)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (!match.Success) return null;
+
+        var value = match.Groups["value"].Value;
+        try
+        {
+            return JsonSerializer.Deserialize<string>($"\"{value.Replace("\"", "\\\"")}\"");
+        }
+        catch
+        {
+            return value;
+        }
+    }
+
+    private static string CompactError(string message)
+    {
+        var firstLine = message.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? message;
+        return firstLine.Length <= 240 ? firstLine : firstLine[..240];
     }
 
     private static HookEventKind DetermineKind(string eventName, string? notificationType)

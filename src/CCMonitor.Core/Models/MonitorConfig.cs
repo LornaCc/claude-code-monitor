@@ -9,6 +9,7 @@ public sealed class MonitorConfig
     public bool ErrorSound { get; set; } = true;
     public bool SavePromptPreview { get; set; } = false;
     public int SessionRetentionHours { get; set; } = 24;
+    public int StaleSessionMinutes { get; set; } = 30;
     public double? WindowLeft { get; set; }
     public double? WindowTop { get; set; }
     public double? WindowWidth { get; set; }

@@ -31,6 +31,53 @@ public sealed class HookPipelineTests
         Assert.Equal("demo", loaded[0].ProjectName);
     }
 
+    [Fact]
+    public async Task Terminal_token_survives_session_state_updates()
+    {
+        using var temp = new TempDirectory();
+        var paths = new CcMonitorPaths(temp.Path);
+        var store = new ClaudeSessionStateStore(paths);
+        var machine = new ClaudeSessionStateMachine();
+        var hookEvent = new HookEvent
+        {
+            Kind = HookEventKind.UserPromptSubmit,
+            RawEventName = "UserPromptSubmit",
+            SessionId = "new-session-id",
+            TerminalToken = "0123456789abcdef0123456789abcdef",
+            WorkingDirectory = @"C:\work\demo"
+        };
+
+        var state = await store.GetOrCreateAsync(hookEvent.SessionId, hookEvent.WorkingDirectory);
+        machine.Apply(state, hookEvent, new MonitorConfig());
+        await store.SaveAtomicAsync(state);
+
+        var loaded = Assert.Single(await store.LoadAllAsync());
+        Assert.Equal("new-session-id", loaded.SessionId);
+        Assert.Equal("0123456789abcdef0123456789abcdef", loaded.TerminalToken);
+    }
+
+    [Fact]
+    public async Task Session_lock_timeout_is_reported_instead_of_silently_dropping_event()
+    {
+        using var temp = new TempDirectory();
+        var store = new ClaudeSessionStateStore(new CcMonitorPaths(temp.Path));
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var holder = store.WithSessionLockAsync("same-session", async () =>
+        {
+            entered.SetResult();
+            await release.Task;
+        });
+        await entered.Task;
+
+        await Assert.ThrowsAsync<TimeoutException>(() =>
+            store.WithSessionLockAsync("same-session", () => Task.CompletedTask, timeoutMs: 100));
+
+        release.SetResult();
+        await holder;
+    }
+
     private sealed class TempDirectory : IDisposable
     {
         public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"cc-monitor-hook-tests-{Guid.NewGuid():N}");

@@ -31,6 +31,17 @@ public sealed class ClaudeSettingsMergerTests
     }
 
     [Fact]
+    public void Install_uses_one_catch_all_notification_hook()
+    {
+        var installed = _merger.Install("{}", Command);
+        var root = JsonNode.Parse(installed)!.AsObject();
+        var notifications = root["hooks"]!["Notification"]!.AsArray();
+
+        Assert.Single(notifications);
+        Assert.Equal("", notifications[0]!["matcher"]!.GetValue<string>());
+    }
+
+    [Fact]
     public void Install_configures_status_line_refresh()
     {
         const string statusLineCommand = "CCMonitor.StatusLine.exe";

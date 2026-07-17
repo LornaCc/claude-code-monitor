@@ -54,7 +54,9 @@ The installer merges with existing fields and hooks in `%USERPROFILE%\.claude\se
 
 ## VS Code Terminal Integration
 
-The release archive includes `cc-monitor-terminal-bridge-*.vsix`. Install it in VS Code and reload the window. Clicking a session in CC Monitor can then focus its VS Code window and, when possible, the corresponding terminal.
+The release archive includes `cc-monitor-terminal-bridge-*.vsix`. Install it in VS Code and reload every window that runs Claude Code. Each window publishes a local heartbeat with workspace and terminal metadata, allowing CC Monitor to target one window without choosing an arbitrary VS Code process.
+
+When one VS Code window has several terminals with the same working directory, use **CC Monitor: Create Managed Claude Terminal** or **CC Monitor: Migrate Active Terminal** from the VS Code command palette. Managed terminals receive a stable local token that is inherited by Claude hooks. The token survives Claude session ID changes for the lifetime of the terminal. Existing terminals continue using working-directory matching when the match is unique.
 
 ## Statuses
 
@@ -65,6 +67,7 @@ The release archive includes `cc-monitor-terminal-bridge-*.vsix`. Install it in 
 | `NEEDS ATTENTION` | Waiting for permission or user action |
 | `DONE` | Work is complete and waiting for new input |
 | `ERROR` | Claude stopped unexpectedly |
+| `STALE` | No Hook event has arrived recently; the session may already have ended |
 
 ## Architecture
 
@@ -99,6 +102,9 @@ The self-contained package is written to `artifacts` and includes the desktop ap
 ## Troubleshooting
 
 - Status does not change: check `/hooks` in Claude Code and `%USERPROFILE%\.cc-monitor\logs\cc-monitor-hook.log`.
+- `InvalidJson` appears in the Hook log: reinstall the latest hooks. The log includes a payload hash and structural diagnostics; set `CCMONITOR_DEBUG_HOOKS=1` only when raw local payload capture is acceptable.
+- Terminal Bridge is not running: install the bundled VSIX and run `Developer: Reload Window` in every relevant VS Code window.
+- Multiple terminals have the same working directory: run `CC Monitor: Migrate Active Terminal` in VS Code, then continue in the newly created managed Claude terminal.
 - CC Monitor is missing from `/hooks`: reinstall the hooks from Settings or with the install script.
 - `settings.json` is invalid: repair `%USERPROFILE%\.claude\settings.json`, then reinstall the hooks.
 - The app directory moved: reinstall the hooks after moving it.

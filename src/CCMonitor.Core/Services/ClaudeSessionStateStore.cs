@@ -23,19 +23,33 @@ public sealed class ClaudeSessionStateStore
 
     public string GetSessionPath(string sessionId) => Path.Combine(_paths.SessionsDirectory, $"{SanitizeFileName(sessionId)}.json");
 
-    public async Task WithSessionLockAsync(string sessionId, Func<Task> action, int timeoutMs = 500)
+    public async Task WithSessionLockAsync(string sessionId, Func<Task> action, int timeoutMs = 5000)
     {
         await Task.Factory.StartNew(() =>
         {
             using var mutex = new Mutex(false, $@"Global\CCMonitor.Session.{Hash(sessionId)}");
-            if (!mutex.WaitOne(timeoutMs)) return;
+            var lockTaken = false;
             try
             {
+                try
+                {
+                    lockTaken = mutex.WaitOne(timeoutMs);
+                }
+                catch (AbandonedMutexException)
+                {
+                    lockTaken = true;
+                }
+
+                if (!lockTaken)
+                {
+                    throw new TimeoutException($"Timed out waiting {timeoutMs}ms for session lock {sessionId}.");
+                }
+
                 action().GetAwaiter().GetResult();
             }
             finally
             {
-                mutex.ReleaseMutex();
+                if (lockTaken) mutex.ReleaseMutex();
             }
         }, CancellationToken.None, TaskCreationOptions.DenyChildAttach, TaskScheduler.Default);
     }

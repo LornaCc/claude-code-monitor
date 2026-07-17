@@ -5,6 +5,7 @@ public sealed class ClaudeSessionState
     public string SessionId { get; set; } = "";
     public string ProjectName { get; set; } = "";
     public string WorkingDirectory { get; set; } = "";
+    public string TerminalToken { get; set; } = "";
     public int? TerminalProcessId { get; set; }
     public ClaudeSessionStatus Status { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

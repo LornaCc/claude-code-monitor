@@ -11,16 +11,19 @@ public sealed class SessionCardViewModel : INotifyPropertyChanged
     private ClaudeSessionState _state;
     private DateTimeOffset _now = DateTimeOffset.Now;
     private string? _customName;
+    private readonly TimeSpan _staleAfter;
 
-    public SessionCardViewModel(ClaudeSessionState state, string? customName = null)
+    public SessionCardViewModel(ClaudeSessionState state, string? customName = null, TimeSpan? staleAfter = null)
     {
         _state = state;
         _customName = customName;
+        _staleAfter = staleAfter ?? TimeSpan.FromMinutes(30);
     }
 
     public string SessionId => _state.SessionId;
-    public ClaudeSessionStatus Status => _state.Status;
+    public ClaudeSessionStatus Status => IsStale ? ClaudeSessionStatus.Stale : _state.Status;
     public string WorkingDirectory => _state.WorkingDirectory;
+    public string TerminalToken => _state.TerminalToken;
     public int? TerminalProcessId => _state.TerminalProcessId;
     public string ProjectName => string.IsNullOrWhiteSpace(_state.ProjectName) ? "Unknown Project" : _state.ProjectName;
     public string DisplayName => string.IsNullOrWhiteSpace(_customName)
@@ -36,6 +39,7 @@ public sealed class SessionCardViewModel : INotifyPropertyChanged
         ClaudeSessionStatus.Running => "Working",
         ClaudeSessionStatus.Done => "Done",
         ClaudeSessionStatus.Error => "Errors",
+        ClaudeSessionStatus.Stale => "Possibly stale",
         ClaudeSessionStatus.Idle => "Waiting",
         _ => "Other"
     };
@@ -50,6 +54,7 @@ public sealed class SessionCardViewModel : INotifyPropertyChanged
         ClaudeSessionStatus.Blocked => BlockedDetailText,
         ClaudeSessionStatus.Done => _state.FinishedAt is null ? "Waiting for your input" : $"Finished {FormatAgo(_now - _state.FinishedAt.Value)} ago",
         ClaudeSessionStatus.Error => "Claude stopped unexpectedly",
+        ClaudeSessionStatus.Stale => $"No hook events for {FormatAgo(_now - _state.UpdatedAt)}; this session may have ended",
         ClaudeSessionStatus.Closed => "Session closed",
         _ => ""
     };
@@ -60,6 +65,7 @@ public sealed class SessionCardViewModel : INotifyPropertyChanged
         ClaudeSessionStatus.Blocked => new SolidColorBrush(MediaColor.FromRgb(220, 38, 38)),
         ClaudeSessionStatus.Done => new SolidColorBrush(MediaColor.FromRgb(22, 163, 74)),
         ClaudeSessionStatus.Error => new SolidColorBrush(MediaColor.FromRgb(190, 18, 60)),
+        ClaudeSessionStatus.Stale => new SolidColorBrush(MediaColor.FromRgb(217, 119, 6)),
         _ => new SolidColorBrush(MediaColor.FromRgb(100, 116, 139))
     };
 
@@ -83,8 +89,13 @@ public sealed class SessionCardViewModel : INotifyPropertyChanged
         ClaudeSessionStatus.Blocked => "*",
         ClaudeSessionStatus.Done => "*",
         ClaudeSessionStatus.Error => "*",
+        ClaudeSessionStatus.Stale => "?",
         _ => "-"
     };
+
+    private bool IsStale
+        => _state.Status is ClaudeSessionStatus.Running or ClaudeSessionStatus.Blocked
+            && _now - _state.UpdatedAt >= _staleAfter;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -98,7 +109,13 @@ public sealed class SessionCardViewModel : INotifyPropertyChanged
     public void Tick()
     {
         _now = DateTimeOffset.Now;
+        OnPropertyChanged(nameof(Status));
+        OnPropertyChanged(nameof(PrimaryText));
+        OnPropertyChanged(nameof(StatusGroup));
         OnPropertyChanged(nameof(DetailText));
+        OnPropertyChanged(nameof(AccentBrush));
+        OnPropertyChanged(nameof(IsNeedsAttention));
+        OnPropertyChanged(nameof(Dot));
         OnPropertyChanged(nameof(IsDoneFlashing));
     }
 
@@ -106,6 +123,7 @@ public sealed class SessionCardViewModel : INotifyPropertyChanged
     {
         OnPropertyChanged(nameof(Status));
         OnPropertyChanged(nameof(WorkingDirectory));
+        OnPropertyChanged(nameof(TerminalToken));
         OnPropertyChanged(nameof(TerminalProcessId));
         OnPropertyChanged(nameof(ProjectName));
         OnPropertyChanged(nameof(DisplayName));

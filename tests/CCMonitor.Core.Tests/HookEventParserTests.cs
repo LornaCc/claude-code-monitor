@@ -48,6 +48,30 @@ public sealed class HookEventParserTests
         Assert.Equal(HookEventKind.NotificationIdlePrompt, parsed.Kind);
     }
 
+    [Fact]
+    public void Recovers_json_with_shell_noise_before_payload()
+    {
+        var parsed = _parser.Parse(
+            "unexpected shell output\r\n" +
+            """{"hook_event_name":"Stop","session_id":"s1","cwd":"C:\\work\\app"}""");
+
+        Assert.Equal(HookEventKind.Stop, parsed.Kind);
+        Assert.Equal("s1", parsed.SessionId);
+        Assert.True(parsed.WasRecovered);
+    }
+
+    [Fact]
+    public void Recovers_essential_fields_from_truncated_stop_payload()
+    {
+        var parsed = _parser.Parse(
+            """{"hook_event_name":"Stop","session_id":"s1","cwd":"C:\\work\\app","broken":""");
+
+        Assert.Equal(HookEventKind.Stop, parsed.Kind);
+        Assert.Equal("s1", parsed.SessionId);
+        Assert.True(parsed.WasRecovered);
+        Assert.NotNull(parsed.ParseError);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("{not-json")]

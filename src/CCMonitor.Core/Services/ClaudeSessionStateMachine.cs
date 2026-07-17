@@ -11,6 +11,11 @@ public sealed class ClaudeSessionStateMachine
         state.UpdatedAt = timestamp;
         state.LastHookEvent = hookEvent.RawEventName;
 
+        if (!string.IsNullOrWhiteSpace(hookEvent.TerminalToken))
+        {
+            state.TerminalToken = hookEvent.TerminalToken!;
+        }
+
         if (!string.IsNullOrWhiteSpace(hookEvent.WorkingDirectory))
         {
             state.WorkingDirectory = hookEvent.WorkingDirectory!;
