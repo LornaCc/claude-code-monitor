@@ -66,6 +66,137 @@ public sealed class TerminalBridgeRegistryTests
     }
 
     [Fact]
+    public void Select_matches_terminal_parent_of_session_working_directory()
+    {
+        var expected = Bridge(
+            "expected",
+            "project",
+            [@"C:\work\project"],
+            [Terminal("project", @"C:\work\project")]);
+        var unrelated = Bridge(
+            "unrelated",
+            "other",
+            [@"C:\work\other"],
+            [Terminal("other", @"C:\work\other")]);
+
+        var selected = _registry.Select(
+            [unrelated, expected],
+            "",
+            @"C:\work\project\src\feature",
+            "project");
+
+        Assert.True(selected.IsMatch);
+        Assert.Equal("expected", selected.Bridge!.BridgeId);
+        Assert.Equal("workingDirectoryUnderTerminal", selected.MatchKind);
+    }
+
+    [Fact]
+    public void Select_prefers_closest_terminal_parent_across_windows()
+    {
+        var projectRoot = Bridge(
+            "project-root",
+            "project",
+            [@"C:\work\project"],
+            [Terminal("project", @"C:\work\project")]);
+        var sourceRoot = Bridge(
+            "source-root",
+            "project-src",
+            [@"C:\work\project"],
+            [Terminal("source", @"C:\work\project\src")]);
+
+        var selected = _registry.Select(
+            [projectRoot, sourceRoot],
+            "",
+            @"C:\work\project\src\feature",
+            "project");
+
+        Assert.True(selected.IsMatch);
+        Assert.Equal("source-root", selected.Bridge!.BridgeId);
+        Assert.Equal("workingDirectoryUnderTerminal", selected.MatchKind);
+    }
+
+    [Fact]
+    public void Select_rejects_equally_close_terminal_parents_across_windows()
+    {
+        var first = Bridge(
+            "first",
+            "project",
+            [@"C:\work\project"],
+            [Terminal("one", @"C:\work\project")]);
+        var second = Bridge(
+            "second",
+            "project",
+            [@"C:\work\project"],
+            [Terminal("two", @"C:\work\project")]);
+
+        var selected = _registry.Select(
+            [first, second],
+            "",
+            @"C:\work\project\src",
+            "project");
+
+        Assert.False(selected.IsMatch);
+        Assert.Equal("ambiguous", selected.MatchKind);
+    }
+
+    [Fact]
+    public void Select_does_not_treat_broad_terminal_parent_as_terminal_match()
+    {
+        var bridge = Bridge(
+            "first",
+            "project",
+            [@"C:\Users\admin\Desktop\projects\project"],
+            [Terminal("desktop", @"C:\Users\admin\Desktop")]);
+
+        var selected = _registry.Select(
+            [bridge],
+            "",
+            @"C:\Users\admin\Desktop\projects\project\src",
+            "project");
+
+        Assert.True(selected.IsMatch);
+        Assert.Equal("workingDirectoryInWorkspace", selected.MatchKind);
+    }
+
+    [Fact]
+    public void Select_allows_specific_terminal_parent_when_window_has_no_workspace()
+    {
+        var bridge = Bridge(
+            "first",
+            "",
+            [],
+            [Terminal("project", @"C:\Users\admin\project")]);
+
+        var selected = _registry.Select(
+            [bridge],
+            "",
+            @"C:\Users\admin\project\src",
+            "src");
+
+        Assert.True(selected.IsMatch);
+        Assert.Equal("workingDirectoryUnderTerminal", selected.MatchKind);
+    }
+
+    [Fact]
+    public void Select_allows_nearby_project_terminal_outside_window_workspace()
+    {
+        var bridge = Bridge(
+            "first",
+            "fstr_img_tag_manager",
+            [@"C:\Users\admin\Desktop\2026Intern\fstr_img_tag_manager"],
+            [Terminal("clearMLdemo", @"C:\Users\admin\Desktop\2026Intern\clearMLdemo")]);
+
+        var selected = _registry.Select(
+            [bridge],
+            "",
+            @"C:\Users\admin\Desktop\2026Intern\clearMLdemo\clearml\clearml",
+            "clearml");
+
+        Assert.True(selected.IsMatch);
+        Assert.Equal("workingDirectoryUnderTerminal", selected.MatchKind);
+    }
+
+    [Fact]
     public void Select_reports_bridge_not_running_when_registry_is_empty()
     {
         var selected = _registry.Select([], "", @"C:\work\project", "project");
@@ -114,6 +245,113 @@ public sealed class TerminalBridgeRegistryTests
 
         Assert.False(selected.IsMatch);
         Assert.Equal("terminalTokenNotRegistered", selected.MatchKind);
+    }
+
+    [Fact]
+    public void Select_uses_manual_process_binding_before_cwd()
+    {
+        var expected = Bridge(
+            "expected",
+            "other-workspace",
+            [@"C:\work\other"],
+            [Terminal("bound", @"C:\unrelated") with { ProcessId = 9001 }]);
+        var cwdMatch = Bridge(
+            "cwd-match",
+            "project",
+            [@"C:\work\project"],
+            [Terminal("cwd", @"C:\work\project")]);
+        var binding = new ManualTerminalBinding(
+            "session",
+            "",
+            9001,
+            "bound",
+            @"C:\unrelated",
+            DateTimeOffset.UtcNow);
+
+        var selected = _registry.Select(
+            [cwdMatch, expected],
+            "",
+            @"C:\work\project",
+            "project",
+            binding);
+
+        Assert.True(selected.IsMatch);
+        Assert.Equal("expected", selected.Bridge!.BridgeId);
+        Assert.Equal("manualBinding", selected.MatchKind);
+    }
+
+    [Fact]
+    public void Select_uses_observed_terminal_process_id_before_cwd()
+    {
+        var expected = Bridge(
+            "expected",
+            "",
+            [],
+            [Terminal("bound", @"C:\unrelated") with { ProcessId = 9001 }]);
+        var cwdMatch = Bridge(
+            "cwd-match",
+            "project",
+            [@"C:\work\project"],
+            [Terminal("cwd", @"C:\work\project")]);
+
+        var selected = _registry.Select(
+            [cwdMatch, expected],
+            "",
+            @"C:\work\project",
+            "project",
+            preferredTerminalProcessId: 9001);
+
+        Assert.True(selected.IsMatch);
+        Assert.Equal("expected", selected.Bridge!.BridgeId);
+        Assert.Equal("terminalProcessId", selected.MatchKind);
+    }
+
+    [Fact]
+    public void Select_falls_back_to_cwd_when_observed_process_id_is_stale()
+    {
+        var bridge = Bridge(
+            "cwd-match",
+            "project",
+            [@"C:\work\project"],
+            [Terminal("cwd", @"C:\work\project")]);
+
+        var selected = _registry.Select(
+            [bridge],
+            "",
+            @"C:\work\project",
+            "project",
+            preferredTerminalProcessId: 9001);
+
+        Assert.True(selected.IsMatch);
+        Assert.Equal("cwd-match", selected.Bridge!.BridgeId);
+        Assert.Equal("exactTerminalWorkingDirectory", selected.MatchKind);
+    }
+
+    [Fact]
+    public void Select_reports_stale_manual_binding_instead_of_guessing_by_cwd()
+    {
+        var bridge = Bridge(
+            "cwd-match",
+            "project",
+            [@"C:\work\project"],
+            [Terminal("cwd", @"C:\work\project")]);
+        var binding = new ManualTerminalBinding(
+            "session",
+            "",
+            9001,
+            "missing",
+            @"C:\unrelated",
+            DateTimeOffset.UtcNow);
+
+        var selected = _registry.Select(
+            [bridge],
+            "",
+            @"C:\work\project",
+            "project",
+            binding);
+
+        Assert.False(selected.IsMatch);
+        Assert.Equal("manualTerminalNotRegistered", selected.MatchKind);
     }
 
     private static TerminalBridgeRegistration Bridge(

@@ -38,6 +38,7 @@ public sealed class SessionCardViewModel : INotifyPropertyChanged
         ClaudeSessionStatus.Blocked => "Needs attention",
         ClaudeSessionStatus.Running => "Working",
         ClaudeSessionStatus.Done => "Done",
+        ClaudeSessionStatus.Interrupted => "Interrupted",
         ClaudeSessionStatus.Error => "Errors",
         ClaudeSessionStatus.Stale => "Possibly stale",
         ClaudeSessionStatus.Idle => "Waiting",
@@ -53,6 +54,7 @@ public sealed class SessionCardViewModel : INotifyPropertyChanged
         ClaudeSessionStatus.Running => _state.StartedAt is null ? "Claude is working" : $"Working for {FormatDuration(_now - _state.StartedAt.Value)}",
         ClaudeSessionStatus.Blocked => BlockedDetailText,
         ClaudeSessionStatus.Done => _state.FinishedAt is null ? "Waiting for your input" : $"Finished {FormatAgo(_now - _state.FinishedAt.Value)} ago",
+        ClaudeSessionStatus.Interrupted => "Stopped before completion",
         ClaudeSessionStatus.Error => "Claude stopped unexpectedly",
         ClaudeSessionStatus.Stale => $"No hook events for {FormatAgo(_now - _state.UpdatedAt)}; this session may have ended",
         ClaudeSessionStatus.Closed => "Session closed",
@@ -64,6 +66,7 @@ public sealed class SessionCardViewModel : INotifyPropertyChanged
         ClaudeSessionStatus.Running => new SolidColorBrush(MediaColor.FromRgb(37, 99, 235)),
         ClaudeSessionStatus.Blocked => new SolidColorBrush(MediaColor.FromRgb(220, 38, 38)),
         ClaudeSessionStatus.Done => new SolidColorBrush(MediaColor.FromRgb(22, 163, 74)),
+        ClaudeSessionStatus.Interrupted => new SolidColorBrush(MediaColor.FromRgb(217, 119, 6)),
         ClaudeSessionStatus.Error => new SolidColorBrush(MediaColor.FromRgb(190, 18, 60)),
         ClaudeSessionStatus.Stale => new SolidColorBrush(MediaColor.FromRgb(217, 119, 6)),
         _ => new SolidColorBrush(MediaColor.FromRgb(100, 116, 139))
@@ -88,6 +91,7 @@ public sealed class SessionCardViewModel : INotifyPropertyChanged
         ClaudeSessionStatus.Running => "*",
         ClaudeSessionStatus.Blocked => "*",
         ClaudeSessionStatus.Done => "*",
+        ClaudeSessionStatus.Interrupted => "-",
         ClaudeSessionStatus.Error => "*",
         ClaudeSessionStatus.Stale => "?",
         _ => "-"

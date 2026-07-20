@@ -54,7 +54,9 @@ public sealed class TerminalBridgeRegistry
         IReadOnlyList<TerminalBridgeRegistration> liveBridges,
         string terminalToken,
         string workingDirectory,
-        string projectName)
+        string projectName,
+        ManualTerminalBinding? manualBinding = null,
+        int? preferredTerminalProcessId = null)
     {
         if (liveBridges.Count == 0)
         {
@@ -63,6 +65,32 @@ public sealed class TerminalBridgeRegistry
                 "bridgeNotRunning",
                 "No live CC Monitor Terminal Bridge registration was found.",
                 0);
+        }
+
+        if (manualBinding is not null)
+        {
+            var bindingMatches = liveBridges
+                .Where(bridge => (bridge.Terminals ?? []).Any(
+                    terminal => MatchesManualBinding(terminal, manualBinding)))
+                .ToList();
+            if (bindingMatches.Count == 1)
+            {
+                return new TerminalBridgeSelection(
+                    bindingMatches[0],
+                    "manualBinding",
+                    $"Selected bridge {bindingMatches[0].BridgeId} by explicit session-terminal binding.",
+                    liveBridges.Count);
+            }
+
+            return new TerminalBridgeSelection(
+                null,
+                bindingMatches.Count == 0
+                    ? "manualTerminalNotRegistered"
+                    : "ambiguousManualBinding",
+                bindingMatches.Count == 0
+                    ? "The manually bound terminal is no longer registered. Bind the session again."
+                    : "Multiple live VS Code windows registered the manually bound terminal.",
+                liveBridges.Count);
         }
 
         var requestedToken = NormalizeToken(terminalToken);
@@ -89,6 +117,34 @@ public sealed class TerminalBridgeRegistry
                     ? "No live VS Code terminal registered the session terminal token."
                     : "Multiple live VS Code windows registered the same terminal token.",
                 liveBridges.Count);
+        }
+
+        if (preferredTerminalProcessId is > 0)
+        {
+            var processMatches = liveBridges
+                .Where(bridge => (bridge.Terminals ?? []).Any(
+                    terminal => terminal.ProcessId == preferredTerminalProcessId))
+                .ToList();
+            if (processMatches.Count == 1)
+            {
+                return new TerminalBridgeSelection(
+                    processMatches[0],
+                    "terminalProcessId",
+                    $"Selected bridge {processMatches[0].BridgeId} by terminal process ID.",
+                    liveBridges.Count);
+            }
+
+            if (processMatches.Count > 1)
+            {
+                return new TerminalBridgeSelection(
+                    null,
+                    "ambiguousTerminalProcessId",
+                    "Multiple live VS Code windows registered the same terminal process ID.",
+                    liveBridges.Count);
+            }
+
+            // A process ID is an automatically observed hint and may become stale
+            // after a terminal restart. Continue to safe cwd/workspace matching.
         }
 
         var requestedDirectory = NormalizePath(workingDirectory);
@@ -140,6 +196,19 @@ public sealed class TerminalBridgeRegistry
             if (requestedDirectory.Length > 0 && terminalDirectory == requestedDirectory)
             {
                 return new ScoredBridge(bridge, 600, "exactTerminalWorkingDirectory");
+            }
+
+            var terminalAncestorScore = ScoreTerminalAncestor(
+                requestedDirectory,
+                terminalDirectory);
+            if (terminalAncestorScore > bestScore
+                && IsSafeTerminalAncestor(
+                    terminalDirectory,
+                    requestedDirectory,
+                    bridge.WorkspaceFolders))
+            {
+                bestScore = terminalAncestorScore;
+                matchKind = "workingDirectoryUnderTerminal";
             }
 
             if (requestedDirectory.Length > 0
@@ -212,6 +281,64 @@ public sealed class TerminalBridgeRegistry
         => child.Length > parent.Length
             && child.StartsWith(parent + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsSafeTerminalAncestor(
+        string terminalDirectory,
+        string requestedDirectory,
+        IReadOnlyList<string> workspaceFolders)
+    {
+        if (terminalDirectory.Length == 0
+            || requestedDirectory.Length == 0
+            || !IsDescendant(requestedDirectory, terminalDirectory))
+        {
+            return false;
+        }
+
+        var sameWorkspace = workspaceFolders
+            .Select(NormalizePath)
+            .Where(path => path.Length > 0)
+            .Any(workspaceDirectory =>
+                IsSameOrDescendant(terminalDirectory, workspaceDirectory)
+                && IsSameOrDescendant(requestedDirectory, workspaceDirectory));
+        if (sameWorkspace)
+        {
+            return true;
+        }
+
+        return IsSpecificProjectPath(terminalDirectory)
+            && GetPathDistance(requestedDirectory, terminalDirectory) <= 2;
+    }
+
+    private static bool IsSameOrDescendant(string child, string parent)
+        => child == parent || IsDescendant(child, parent);
+
+    private static int ScoreTerminalAncestor(
+        string requestedDirectory,
+        string terminalDirectory)
+    {
+        if (requestedDirectory.Length == 0
+            || terminalDirectory.Length == 0
+            || !IsDescendant(requestedDirectory, terminalDirectory))
+        {
+            return 0;
+        }
+
+        var distance = GetPathDistance(requestedDirectory, terminalDirectory);
+        return 541 - Math.Min(distance, 40);
+    }
+
+    private static int GetPathDistance(string child, string parent)
+    {
+        if (!IsDescendant(child, parent))
+        {
+            return int.MaxValue;
+        }
+
+        var relativePath = child[(parent.Length + 1)..];
+        return relativePath.Split(
+            Path.DirectorySeparatorChar,
+            StringSplitOptions.RemoveEmptyEntries).Length;
+    }
+
     private static bool IsSpecificProjectPath(string path)
     {
         var root = Path.GetPathRoot(path);
@@ -229,6 +356,20 @@ public sealed class TerminalBridgeRegistry
 
     private static string NormalizeToken(string? value)
         => string.IsNullOrWhiteSpace(value) ? "" : value.Trim().ToLowerInvariant();
+
+    private static bool MatchesManualBinding(
+        TerminalBridgeTerminal terminal,
+        ManualTerminalBinding binding)
+    {
+        var bindingToken = NormalizeToken(binding.TerminalToken);
+        if (bindingToken.Length > 0)
+        {
+            return NormalizeToken(terminal.TerminalToken) == bindingToken;
+        }
+
+        return binding.TerminalProcessId is not null
+            && terminal.ProcessId == binding.TerminalProcessId;
+    }
 
     private sealed record ScoredBridge(
         TerminalBridgeRegistration Bridge,

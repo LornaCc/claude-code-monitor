@@ -3,12 +3,16 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vscode = require('vscode');
+const { normalizePath, selectLegacyTerminal } = require('./terminal-matcher');
 
 const rootDirectory = path.join(os.homedir(), '.cc-monitor');
 const requestFile = path.join(rootDirectory, 'focus-terminal.json');
 const resultFile = path.join(rootDirectory, 'focus-terminal-result.json');
+const bindingRequestFile = path.join(rootDirectory, 'bind-terminal-session.json');
 const registryDirectory = path.join(rootDirectory, 'terminal-bridges');
 const tokenBindingsDirectory = path.join(rootDirectory, 'terminal-token-bindings');
+const terminalBindingsDirectory = path.join(rootDirectory, 'terminal-bindings');
+const sessionsDirectory = path.join(rootDirectory, 'sessions');
 const maxRequestAgeMs = 15000;
 const heartbeatIntervalMs = 2000;
 const terminalTokenEnvironmentVariable = 'CCMONITOR_TERMINAL_TOKEN';
@@ -101,6 +105,52 @@ function activate(context) {
     await createManagedClaudeTerminal(cwd, 'active-terminal-migration');
   };
 
+  const bindActiveTerminalToSession = async () => {
+    const active = vscode.window.activeTerminal;
+    if (!active) {
+      vscode.window.showErrorMessage(
+        'CC Monitor: Select the terminal to bind before running this command.'
+      );
+      return;
+    }
+
+    const session = await selectSessionForBinding();
+    if (!session) {
+      return;
+    }
+
+    const snapshot = await snapshotTerminal(active, managedTokens, output);
+    if (!snapshot.processId && !snapshot.terminalToken) {
+      vscode.window.showErrorMessage(
+        'CC Monitor: The active terminal has no process ID or terminal token yet.'
+      );
+      return;
+    }
+
+    const binding = {
+      sessionId: session.sessionId,
+      terminalToken: snapshot.terminalToken || '',
+      terminalProcessId: snapshot.processId,
+      terminalName: snapshot.name,
+      workingDirectory: snapshot.workingDirectory,
+      updatedAtUtc: new Date().toISOString()
+    };
+    await writeAtomic(
+      path.join(terminalBindingsDirectory, `${sanitizeFileName(session.sessionId)}.json`),
+      binding
+    );
+    await fs.promises.rm(bindingRequestFile, { force: true });
+    refreshRegistration();
+    output.appendLine(
+      `Bound session ${session.sessionId} to terminal "${snapshot.name}" `
+      + `pid=${snapshot.processId || 'n/a'} token=${shortToken(snapshot.terminalToken)}.`
+    );
+    vscode.window.showInformationMessage(
+      `CC Monitor: Bound ${session.projectName || session.sessionId.slice(0, 8)} `
+      + `to terminal "${snapshot.name}".`
+    );
+  };
+
   const processRequest = async (explicitRequest) => {
     let request = explicitRequest;
     try {
@@ -138,15 +188,19 @@ function activate(context) {
       }
 
       match.terminal.show(false);
+      const windowFocus = await focusBridgeWindow();
       await writeResult(request, {
         status: 'matched',
         terminal: match.terminal,
         terminalToken: match.terminalToken,
         matchKind: match.matchKind,
-        reason: match.reason
+        reason: match.reason,
+        windowFocused: windowFocus.focused,
+        windowFocusReason: windowFocus.reason
       });
       output.appendLine(
-        `Focused terminal "${match.terminal.name}" by ${match.matchKind} for request ${request.requestId}.`
+        `Focused terminal "${match.terminal.name}" by ${match.matchKind} for request ${request.requestId}; `
+        + `windowFocused=${windowFocus.focused} (${windowFocus.reason}).`
       );
     } catch (error) {
       if (error && error.code === 'ENOENT') {
@@ -205,6 +259,10 @@ function activate(context) {
     vscode.commands.registerCommand(
       'ccMonitor.migrateActiveTerminal',
       migrateActiveTerminal
+    ),
+    vscode.commands.registerCommand(
+      'ccMonitor.bindActiveTerminalToSession',
+      bindActiveTerminalToSession
     )
   );
 
@@ -225,9 +283,34 @@ function activate(context) {
       workspaceName: vscode.workspace.name || '',
       matchKind: result.matchKind || '',
       reason: result.reason || '',
+      windowFocused: result.windowFocused,
+      windowFocusReason: result.windowFocusReason || '',
       bridgeId
     };
     await writeAtomic(resultFile, payload);
+  }
+}
+
+async function focusBridgeWindow() {
+  try {
+    const commands = await vscode.commands.getCommands(true);
+    if (!commands.includes('workbench.action.focusWindow')) {
+      return {
+        focused: false,
+        reason: 'VS Code does not expose workbench.action.focusWindow.'
+      };
+    }
+
+    await vscode.commands.executeCommand('workbench.action.focusWindow');
+    return {
+      focused: true,
+      reason: 'The target extension host asked its own VS Code window to take focus.'
+    };
+  } catch (error) {
+    return {
+      focused: false,
+      reason: `VS Code window focus command failed: ${formatError(error)}`
+    };
   }
 }
 
@@ -263,6 +346,32 @@ async function findTerminal(request, managedTokens, output) {
     })
   );
   const requestedToken = normalizeToken(request.terminalToken);
+  const requestedProcessId = Number(request.terminalProcessId);
+  if (Number.isInteger(requestedProcessId) && requestedProcessId > 0) {
+    const manualMatches = snapshots.filter(
+      (snapshot) =>
+        snapshot.processId === requestedProcessId
+        || (requestedToken
+          && normalizeToken(snapshot.terminalToken) === requestedToken)
+    );
+    if (manualMatches.length === 1) {
+      return {
+        terminal: manualMatches[0].terminal,
+        terminalToken: manualMatches[0].terminalToken,
+        matchKind: 'manualBinding',
+        reason: 'A single terminal matched the explicit session-terminal binding.'
+      };
+    }
+    return {
+      matchKind: manualMatches.length === 0
+        ? 'manualTerminalNotRegistered'
+        : 'ambiguousManualBinding',
+      reason: manualMatches.length === 0
+        ? 'The manually bound terminal is no longer registered. Bind the session again.'
+        : `${manualMatches.length} terminals matched the explicit session-terminal binding.`
+    };
+  }
+
   if (requestedToken) {
     const tokenMatches = snapshots.filter(
       (snapshot) => normalizeToken(snapshot.terminalToken) === requestedToken
@@ -285,65 +394,16 @@ async function findTerminal(request, managedTokens, output) {
     };
   }
 
+  const legacyMatch = selectLegacyTerminal(
+    snapshots,
+    request.workingDirectory,
+    (vscode.workspace.workspaceFolders || []).map((folder) => folder.uri.fsPath)
+  );
+  if (legacyMatch.matchKind !== 'noMatch') {
+    return legacyMatch;
+  }
+
   const requestedDirectory = normalizePath(request.workingDirectory);
-  if (requestedDirectory) {
-    const exactMatches = snapshots.filter(
-      (snapshot) => snapshot.workingDirectory === requestedDirectory
-    );
-    if (exactMatches.length === 1) {
-      return {
-        terminal: exactMatches[0].terminal,
-        terminalToken: exactMatches[0].terminalToken,
-        matchKind: 'exactWorkingDirectory',
-        reason: 'A single legacy terminal had the exact requested working directory.'
-      };
-    }
-    if (exactMatches.length > 1) {
-      return {
-        matchKind: 'ambiguousExactWorkingDirectory',
-        reason: `${exactMatches.length} legacy terminals had the exact requested working directory. `
-          + 'Use CC Monitor: Migrate Active Terminal to create a tokenized terminal.'
-      };
-    }
-
-    if (isSpecificProjectPath(requestedDirectory)) {
-      const descendantMatches = snapshots.filter(
-        (snapshot) =>
-          snapshot.workingDirectory
-          && isDescendant(snapshot.workingDirectory, requestedDirectory)
-      );
-      if (descendantMatches.length === 1) {
-        return {
-          terminal: descendantMatches[0].terminal,
-          terminalToken: descendantMatches[0].terminalToken,
-          matchKind: 'workingDirectoryDescendant',
-          reason: 'A single legacy terminal was inside the requested project directory.'
-        };
-      }
-      if (descendantMatches.length > 1) {
-        return {
-          matchKind: 'ambiguousWorkingDirectory',
-          reason: `${descendantMatches.length} legacy terminals were inside the requested project directory. `
-            + 'Use CC Monitor: Migrate Active Terminal to create a tokenized terminal.'
-        };
-      }
-    }
-  }
-
-  const workspaceMatches = (vscode.workspace.workspaceFolders || []).some((folder) => {
-    const workspaceDirectory = normalizePath(folder.uri.fsPath);
-    return requestedDirectory === workspaceDirectory
-      || isDescendant(requestedDirectory, workspaceDirectory);
-  });
-  if (workspaceMatches && snapshots.length === 1) {
-    return {
-      terminal: snapshots[0].terminal,
-      terminalToken: snapshots[0].terminalToken,
-      matchKind: 'singleWorkspaceTerminal',
-      reason: 'The selected workspace had exactly one terminal.'
-    };
-  }
-
   const terminalSummary = snapshots
     .map((snapshot) =>
       `${snapshot.terminal.name}[pid=${snapshot.processId || 'n/a'},`
@@ -456,6 +516,72 @@ async function removeTokenBinding(terminal, managedTokens) {
   );
 }
 
+async function selectSessionForBinding() {
+  const pending = await tryReadJson(bindingRequestFile);
+  if (pending?.sessionId) {
+    const requestedAt = Date.parse(pending.requestedAtUtc || '');
+    if (Number.isFinite(requestedAt) && Date.now() - requestedAt <= 10 * 60 * 1000) {
+      return {
+        sessionId: pending.sessionId,
+        projectName: pending.projectName || '',
+        workingDirectory: pending.workingDirectory || ''
+      };
+    }
+  }
+
+  let fileNames;
+  try {
+    fileNames = await fs.promises.readdir(sessionsDirectory);
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      vscode.window.showErrorMessage('CC Monitor: No sessions were found to bind.');
+      return undefined;
+    }
+    throw error;
+  }
+
+  const sessions = [];
+  for (const fileName of fileNames.filter((name) => name.endsWith('.json'))) {
+    const state = await tryReadJson(path.join(sessionsDirectory, fileName));
+    const sessionId = state?.SessionId || state?.sessionId;
+    if (!sessionId) {
+      continue;
+    }
+    sessions.push({
+      sessionId,
+      projectName: state.ProjectName || state.projectName || '',
+      workingDirectory: state.WorkingDirectory || state.workingDirectory || '',
+      updatedAt: Date.parse(state.UpdatedAt || state.updatedAt || '') || 0
+    });
+  }
+
+  sessions.sort((left, right) => right.updatedAt - left.updatedAt);
+  const picked = await vscode.window.showQuickPick(
+    sessions.map((session) => ({
+      label: session.projectName || 'Unknown project',
+      description: session.sessionId.slice(0, 8),
+      detail: session.workingDirectory || 'No working directory',
+      session
+    })),
+    {
+      title: 'Bind active terminal to a CC Monitor session',
+      placeHolder: 'Choose the session that belongs to the active terminal'
+    }
+  );
+  return picked?.session;
+}
+
+async function tryReadJson(filePath) {
+  try {
+    return JSON.parse(await fs.promises.readFile(filePath, 'utf8'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return undefined;
+    }
+    return undefined;
+  }
+}
+
 async function writeAtomic(filePath, value) {
   await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
   const tempFile =
@@ -471,13 +597,6 @@ async function writeAtomic(filePath, value) {
   });
 }
 
-function normalizePath(value) {
-  if (!value || typeof value !== 'string') {
-    return '';
-  }
-  return path.resolve(value).replace(/[\\/]+$/, '').toLowerCase();
-}
-
 function normalizeToken(value) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
@@ -487,14 +606,8 @@ function shortToken(value) {
   return normalized ? normalized.slice(0, 8) : 'none';
 }
 
-function isDescendant(child, parent) {
-  return Boolean(child && parent && child !== parent && child.startsWith(`${parent}${path.sep}`));
-}
-
-function isSpecificProjectPath(value) {
-  const parsed = path.parse(value);
-  const relative = value.slice(parsed.root.length);
-  return relative.split(/[\\/]+/).filter(Boolean).length >= 3;
+function sanitizeFileName(value) {
+  return String(value || '').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_');
 }
 
 function formatError(error) {

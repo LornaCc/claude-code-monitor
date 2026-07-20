@@ -16,24 +16,36 @@ public sealed class VsCodeTerminalBridge
 
     private readonly string _requestPath;
     private readonly string _resultPath;
+    private readonly string _bindingRequestPath;
     private readonly TerminalBridgeRegistry _registry;
+    private readonly ManualTerminalBindingStore _bindingStore;
 
     public VsCodeTerminalBridge(CcMonitorPaths paths)
     {
         _requestPath = Path.Combine(paths.RootDirectory, "focus-terminal.json");
         _resultPath = Path.Combine(paths.RootDirectory, "focus-terminal-result.json");
+        _bindingRequestPath = Path.Combine(paths.RootDirectory, "bind-terminal-session.json");
         _registry = new TerminalBridgeRegistry(paths);
+        _bindingStore = new ManualTerminalBindingStore(paths);
     }
 
     public async Task<TerminalFocusResult> RequestFocusAsync(
         string sessionId,
         string terminalToken,
+        int? terminalProcessId,
         string workingDirectory,
         string projectName,
         TimeSpan? timeout = null)
     {
         var liveBridges = _registry.LoadLive();
-        var selection = _registry.Select(liveBridges, terminalToken, workingDirectory, projectName);
+        var manualBinding = _bindingStore.TryLoad(sessionId);
+        var selection = _registry.Select(
+            liveBridges,
+            terminalToken,
+            workingDirectory,
+            projectName,
+            manualBinding,
+            terminalProcessId);
         if (!selection.IsMatch)
         {
             return new TerminalFocusResult(
@@ -57,7 +69,9 @@ public sealed class VsCodeTerminalBridge
             DateTimeOffset.UtcNow,
             selection.Bridge.BridgeId,
             sessionId,
-            terminalToken,
+            manualBinding?.TerminalToken ?? terminalToken,
+            manualBinding?.TerminalProcessId
+                ?? (selection.MatchKind == "terminalProcessId" ? terminalProcessId : null),
             workingDirectory,
             projectName);
 
@@ -90,6 +104,21 @@ public sealed class VsCodeTerminalBridge
             selection.LiveBridgeCount);
     }
 
+    public void PrepareManualBinding(
+        string sessionId,
+        string workingDirectory,
+        string projectName)
+    {
+        WriteAtomic(
+            _bindingRequestPath,
+            new TerminalBindingRequest(
+                3,
+                sessionId,
+                workingDirectory,
+                projectName,
+                DateTimeOffset.UtcNow));
+    }
+
     private TerminalFocusResult? TryReadResult()
     {
         try
@@ -119,8 +148,16 @@ public sealed class VsCodeTerminalBridge
         string TargetBridgeId,
         string SessionId,
         string TerminalToken,
+        int? TerminalProcessId,
         string WorkingDirectory,
         string ProjectName);
+
+    private sealed record TerminalBindingRequest(
+        int ProtocolVersion,
+        string SessionId,
+        string WorkingDirectory,
+        string ProjectName,
+        DateTimeOffset RequestedAtUtc);
 }
 
 public enum TerminalFocusStatus
@@ -140,4 +177,6 @@ public sealed record TerminalFocusResult(
     string MatchKind,
     string Reason,
     string BridgeId,
-    int LiveBridgeCount = 0);
+    int LiveBridgeCount = 0,
+    bool? WindowFocused = null,
+    string WindowFocusReason = "");

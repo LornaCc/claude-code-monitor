@@ -22,7 +22,8 @@
     "onStartupFinished",
     "onCommand:ccMonitor.focusTerminal",
     "onCommand:ccMonitor.createManagedClaudeTerminal",
-    "onCommand:ccMonitor.migrateActiveTerminal"
+    "onCommand:ccMonitor.migrateActiveTerminal",
+    "onCommand:ccMonitor.bindActiveTerminalToSession"
   ],
   "main": "./extension.js",
   "contributes": {
@@ -38,11 +39,16 @@
       {
         "command": "ccMonitor.migrateActiveTerminal",
         "title": "CC Monitor: Migrate Active Terminal"
+      },
+      {
+        "command": "ccMonitor.bindActiveTerminalToSession",
+        "title": "CC Monitor: Bind Active Terminal to Session"
       }
     ]
   },
   "scripts": {
-    "package": "vsce package --no-dependencies"
+    "package": "vsce package --no-dependencies",
+    "test": "node --test terminal-matcher.test.js"
   },
   "devDependencies": {
     "@vscode/vsce": "^3.6.0"

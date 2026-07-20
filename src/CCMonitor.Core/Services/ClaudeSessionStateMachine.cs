@@ -16,6 +16,11 @@ public sealed class ClaudeSessionStateMachine
             state.TerminalToken = hookEvent.TerminalToken!;
         }
 
+        if (hookEvent.TerminalProcessId is > 0)
+        {
+            state.TerminalProcessId = hookEvent.TerminalProcessId;
+        }
+
         if (!string.IsNullOrWhiteSpace(hookEvent.WorkingDirectory))
         {
             state.WorkingDirectory = hookEvent.WorkingDirectory!;
@@ -26,6 +31,7 @@ public sealed class ClaudeSessionStateMachine
         {
             case HookEventKind.SessionStart:
                 state.Status = ClaudeSessionStatus.Idle;
+                state.InterruptedAt = null;
                 break;
             case HookEventKind.UserPromptSubmit:
                 state.Status = ClaudeSessionStatus.Running;
@@ -33,16 +39,20 @@ public sealed class ClaudeSessionStateMachine
                 state.BlockedAt = null;
                 state.FinishedAt = null;
                 state.FailedAt = null;
+                state.InterruptedAt = null;
                 state.BlockedReason = null;
                 state.PromptPreview = config.SavePromptPreview ? Truncate(hookEvent.Prompt, 100) : null;
                 break;
             case HookEventKind.PermissionRequest:
             case HookEventKind.NotificationPermissionPrompt:
-                state.Status = ClaudeSessionStatus.Blocked;
-                state.BlockedAt = timestamp;
-                state.BlockedReason = string.IsNullOrWhiteSpace(hookEvent.ToolName)
-                    ? "Permission required"
-                    : $"Permission required: {hookEvent.ToolName}";
+                if (state.Status != ClaudeSessionStatus.Interrupted)
+                {
+                    state.Status = ClaudeSessionStatus.Blocked;
+                    state.BlockedAt = timestamp;
+                    state.BlockedReason = string.IsNullOrWhiteSpace(hookEvent.ToolName)
+                        ? "Permission required"
+                        : $"Permission required: {hookEvent.ToolName}";
+                }
                 break;
             case HookEventKind.Activity:
                 if (state.Status == ClaudeSessionStatus.Blocked)
@@ -54,20 +64,33 @@ public sealed class ClaudeSessionStateMachine
                 }
                 break;
             case HookEventKind.NotificationIdlePrompt:
-                state.Status = ClaudeSessionStatus.Done;
-                state.FinishedAt ??= timestamp;
+                if (state.Status != ClaudeSessionStatus.Interrupted)
+                {
+                    state.Status = ClaudeSessionStatus.Done;
+                    state.FinishedAt ??= timestamp;
+                }
                 state.BlockedAt = null;
                 state.BlockedReason = null;
                 break;
             case HookEventKind.Stop:
-                state.Status = ClaudeSessionStatus.Done;
-                state.FinishedAt = timestamp;
+                if (state.Status == ClaudeSessionStatus.Interrupted
+                    && state.InterruptedAt is not null)
+                {
+                    state.FinishedAt = state.InterruptedAt;
+                }
+                else
+                {
+                    state.Status = ClaudeSessionStatus.Done;
+                    state.FinishedAt = timestamp;
+                }
                 state.BlockedAt = null;
                 state.BlockedReason = null;
                 break;
             case HookEventKind.StopFailure:
-                state.Status = ClaudeSessionStatus.Error;
-                state.FailedAt = timestamp;
+                state.Status = ClaudeSessionStatus.Interrupted;
+                state.FinishedAt = timestamp;
+                state.FailedAt = null;
+                state.InterruptedAt = timestamp;
                 state.BlockedAt = null;
                 state.BlockedReason = null;
                 break;

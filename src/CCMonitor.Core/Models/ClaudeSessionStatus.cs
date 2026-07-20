@@ -6,6 +6,7 @@ public enum ClaudeSessionStatus
     Running,
     Blocked,
     Done,
+    Interrupted,
     Error,
     Stale,
     Closed

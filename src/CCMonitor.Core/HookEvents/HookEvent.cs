@@ -8,6 +8,7 @@ public sealed record HookEvent
     public string RawEventName { get; init; } = "";
     public string SessionId { get; init; } = "";
     public string? TerminalToken { get; init; }
+    public int? TerminalProcessId { get; init; }
     public string? WorkingDirectory { get; init; }
     public string? Prompt { get; init; }
     public string? ToolName { get; init; }

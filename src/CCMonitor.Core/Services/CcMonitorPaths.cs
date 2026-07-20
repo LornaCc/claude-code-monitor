@@ -16,6 +16,7 @@ public sealed class CcMonitorPaths
     public string LogsDirectory => Path.Combine(RootDirectory, "logs");
     public string DebugHooksDirectory => Path.Combine(RootDirectory, "debug-hooks");
     public string TerminalBridgesDirectory => Path.Combine(RootDirectory, "terminal-bridges");
+    public string TerminalBindingsDirectory => Path.Combine(RootDirectory, "terminal-bindings");
     public string UsageMetricsDirectory => Path.Combine(RootDirectory, "usage");
     public string ConfigPath => Path.Combine(RootDirectory, "config.json");
     public string HiddenSessionsPath => Path.Combine(RootDirectory, "hidden-sessions.json");
@@ -27,6 +28,7 @@ public sealed class CcMonitorPaths
         Directory.CreateDirectory(SessionsDirectory);
         Directory.CreateDirectory(LogsDirectory);
         Directory.CreateDirectory(TerminalBridgesDirectory);
+        Directory.CreateDirectory(TerminalBindingsDirectory);
         Directory.CreateDirectory(UsageMetricsDirectory);
     }
 }

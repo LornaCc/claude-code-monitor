@@ -24,10 +24,16 @@ public sealed class ClaudeSessionStateStore
     public string GetSessionPath(string sessionId) => Path.Combine(_paths.SessionsDirectory, $"{SanitizeFileName(sessionId)}.json");
 
     public async Task WithSessionLockAsync(string sessionId, Func<Task> action, int timeoutMs = 5000)
+        => await WithNamedLockAsync($"Session.{Hash(sessionId)}", action, timeoutMs);
+
+    public async Task WithTerminalIdentityLockAsync(string terminalIdentity, Func<Task> action, int timeoutMs = 5000)
+        => await WithNamedLockAsync($"Terminal.{Hash(terminalIdentity)}", action, timeoutMs);
+
+    private static async Task WithNamedLockAsync(string lockName, Func<Task> action, int timeoutMs)
     {
         await Task.Factory.StartNew(() =>
         {
-            using var mutex = new Mutex(false, $@"Global\CCMonitor.Session.{Hash(sessionId)}");
+            using var mutex = new Mutex(false, $@"Global\CCMonitor.{lockName}");
             var lockTaken = false;
             try
             {
@@ -42,7 +48,7 @@ public sealed class ClaudeSessionStateStore
 
                 if (!lockTaken)
                 {
-                    throw new TimeoutException($"Timed out waiting {timeoutMs}ms for session lock {sessionId}.");
+                    throw new TimeoutException($"Timed out waiting {timeoutMs}ms for CC Monitor lock {lockName}.");
                 }
 
                 action().GetAwaiter().GetResult();
@@ -113,6 +119,9 @@ public sealed class ClaudeSessionStateStore
 
         return states.OrderByDescending(s => s.UpdatedAt).ToList();
     }
+
+    public Task<ClaudeSessionState?> TryLoadAsync(string sessionId)
+        => TryReadWithRetryAsync(GetSessionPath(sessionId));
 
     public void RemoveExpiredClosedSessions(int retentionHours)
     {

@@ -31,7 +31,7 @@ Each VS Code window writes a heartbeat to:
 
 Protocol v3 registrations contain workspace folders and terminal PID/cwd metadata plus a terminal token for managed terminals. The extension injects `CCMONITOR_TERMINAL_TOKEN` when it creates a managed Claude terminal. Claude Hooks inherit the token and persist it in the session state, so a changed Claude session ID still points to the same terminal.
 
-The desktop app selects by terminal token first, then writes a request containing `targetBridgeId` and the token. Only that bridge answers. Legacy terminals without a token continue using cwd/project matching when the match is unique. Ambiguous legacy cwd matches return `noMatch` with migration guidance. Results explicitly report `matched`, `noMatch`, or, from the app when no heartbeat exists, `bridgeNotRunning`.
+The desktop app selects by an explicit session-terminal binding first, then terminal token, then unique cwd/project matching. It writes a request containing `targetBridgeId`; only that bridge answers. Legacy terminals without a token accept an exact cwd or the unique closest parent/child path. A nearby, sufficiently specific terminal parent may be used across workspace boundaries, while broad parent directories and ambiguous candidates return `noMatch`. Users can create a persistent PID/token binding with `CC Monitor: Bind Active Terminal to Session` when cwd matching is insufficient. Results explicitly report `matched`, `noMatch`, or, from the app when no heartbeat exists, `bridgeNotRunning`.
 
 If the bridge cannot identify a terminal, the app activates a VS Code window only when exactly one window title contains the project name. It never selects an arbitrary first VS Code window.
 

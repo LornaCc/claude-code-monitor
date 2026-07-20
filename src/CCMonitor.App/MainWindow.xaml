@@ -168,6 +168,7 @@
                                             <Button.ContextMenu>
                                                 <ContextMenu>
                                                     <MenuItem Header="Name" Click="RenameSession_Click" />
+                                                    <MenuItem Header="Bind terminal…" Click="BindTerminal_Click" />
                                                     <MenuItem Header="Hide" Click="HideSession_Click" />
                                                     <Separator />
                                                     <MenuItem Header="Remove" Click="RemoveSession_Click" />
@@ -200,6 +201,7 @@
                                                 <Button Grid.Column="1" Content="&#x2026;" Style="{StaticResource ActionIconButtonStyle}" Margin="10,0,0,0" HorizontalAlignment="Right" VerticalAlignment="Top" Click="OpenActionsMenu_Click">
                                                         <Button.ContextMenu>
                                                             <ContextMenu>
+                                                                <MenuItem Header="Bind terminal…" Click="BindTerminal_Click" />
                                                                 <MenuItem Header="Restore" Click="RestoreSession_Click" />
                                                                 <Separator />
                                                                 <MenuItem Header="Remove" Click="RemoveSession_Click" />

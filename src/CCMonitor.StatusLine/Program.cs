@@ -79,7 +79,14 @@ try
     }
 
     await new SessionUsageMetricsStore(paths).SaveAtomicAsync(metrics);
-    logger.Info($"usage saved session={sessionId} transcript={File.Exists(transcriptPath)} contextTokens={metrics.InputTokens?.ToString() ?? "n/a"}/{metrics.ContextWindowSizeTokens?.ToString() ?? "n/a"} context={metrics.ContextUsedPercent?.ToString("0.#") ?? "n/a"} cost={(metrics.TotalCostUsd is null ? "n/a" : "available")}");
+    var interruptResult = await new TranscriptInterruptStateService(paths)
+        .ApplyAsync(transcriptPath);
+    logger.Info(
+        $"usage saved session={sessionId} transcript={File.Exists(transcriptPath)} " +
+        $"contextTokens={metrics.InputTokens?.ToString() ?? "n/a"}/{metrics.ContextWindowSizeTokens?.ToString() ?? "n/a"} " +
+        $"context={metrics.ContextUsedPercent?.ToString("0.#") ?? "n/a"} " +
+        $"cost={(metrics.TotalCostUsd is null ? "n/a" : "available")} " +
+        $"interruptApplied={interruptResult.Applied}");
     Console.Write("CC Monitor");
 }
 catch (Exception ex)

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using CCMonitor.Core.HookEvents;
+using CCMonitor.Core.Models;
 using CCMonitor.Core.Services;
 
 var stopwatch = Stopwatch.StartNew();
@@ -54,17 +55,53 @@ try
     var config = new MonitorConfigStore(paths).LoadOrCreate();
     var store = new ClaudeSessionStateStore(paths);
     var stateMachine = new ClaudeSessionStateMachine();
-
-    await store.WithSessionLockAsync(hookEvent.SessionId, async () =>
+    var terminalIdentity = new TerminalIdentityResolver(paths).Resolve(hookEvent);
+    hookEvent = hookEvent with
     {
-        var state = await store.GetOrCreateAsync(hookEvent.SessionId, hookEvent.WorkingDirectory);
-        var oldStatus = state.Status;
-        stateMachine.Apply(state, hookEvent, config);
-        await store.SaveAtomicAsync(state);
-        logger.Info(
-            $"session={Short(state.SessionId)} terminalToken={ShortToken(state.TerminalToken)} " +
-            $"event={hookEvent.RawEventName} {oldStatus}->{state.Status} duration={stopwatch.ElapsedMilliseconds}ms");
-    });
+        TerminalToken = string.IsNullOrWhiteSpace(terminalIdentity.TerminalToken)
+            ? hookEvent.TerminalToken
+            : terminalIdentity.TerminalToken,
+        TerminalProcessId = terminalIdentity.TerminalProcessId
+    };
+
+    async Task ProcessEventAsync()
+    {
+        ClaudeSessionState? currentState = null;
+        await store.WithSessionLockAsync(hookEvent.SessionId, async () =>
+        {
+            currentState = await store.GetOrCreateAsync(hookEvent.SessionId, hookEvent.WorkingDirectory);
+            var oldStatus = currentState.Status;
+            stateMachine.Apply(currentState, hookEvent, config);
+            await store.SaveAtomicAsync(currentState);
+            logger.Info(
+                $"session={Short(currentState.SessionId)} terminalToken={ShortToken(currentState.TerminalToken)} " +
+                $"terminalPid={currentState.TerminalProcessId?.ToString() ?? "none"} " +
+                $"identityMatch={terminalIdentity.MatchKind} event={hookEvent.RawEventName} " +
+                $"{oldStatus}->{currentState.Status} duration={stopwatch.ElapsedMilliseconds}ms");
+        });
+
+        if (currentState is not null
+            && hookEvent.Kind is HookEventKind.SessionStart or HookEventKind.UserPromptSubmit)
+        {
+            var closed = await new TerminalSessionReconciler(store)
+                .CloseSupersededSessionsAsync(currentState);
+            if (closed.Count > 0)
+            {
+                logger.Info(
+                    $"session={Short(currentState.SessionId)} terminalPid={currentState.TerminalProcessId?.ToString() ?? "none"} " +
+                    $"superseded={string.Join(",", closed.Select(Short))}");
+            }
+        }
+    }
+
+    if (terminalIdentity.HasIdentity)
+    {
+        await store.WithTerminalIdentityLockAsync(terminalIdentity.LockKey, ProcessEventAsync);
+    }
+    else
+    {
+        await ProcessEventAsync();
+    }
 }
 catch (Exception ex)
 {

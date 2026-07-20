@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _clock;
     private readonly Dictionary<string, DateTimeOffset> _lastNotifications = new();
     private FileSystemWatcher? _watcher;
+    private FileSystemWatcher? _transcriptWatcher;
     private MonitorConfig _config = new();
     private Forms.NotifyIcon? _notifyIcon;
 
@@ -84,6 +85,8 @@ public partial class MainWindow : Window
             StartupLog("Notify icon setup");
             SetupWatcher();
             StartupLog("Watcher setup");
+            SetupTranscriptWatcher();
+            StartupLog("Transcript watcher setup");
             UpdateHookStatus();
             StartupLog("Hook status updated");
             await ReloadSessionsAsync();
@@ -109,6 +112,50 @@ public partial class MainWindow : Window
         _watcher.Deleted += (_, _) => ScheduleReload();
         _watcher.Renamed += (_, _) => ScheduleReload();
         _watcher.EnableRaisingEvents = true;
+    }
+
+    private void SetupTranscriptWatcher()
+    {
+        var projectsDirectory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".claude",
+            "projects");
+        if (!Directory.Exists(projectsDirectory))
+        {
+            return;
+        }
+
+        _transcriptWatcher = new FileSystemWatcher(projectsDirectory, "*.jsonl")
+        {
+            IncludeSubdirectories = true,
+            NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size
+        };
+        _transcriptWatcher.Created += Transcript_Changed;
+        _transcriptWatcher.Changed += Transcript_Changed;
+        _transcriptWatcher.EnableRaisingEvents = true;
+    }
+
+    private async void Transcript_Changed(object sender, FileSystemEventArgs e)
+    {
+        try
+        {
+            await Task.Delay(60);
+            var result = await new TranscriptInterruptStateService(_paths)
+                .ApplyAsync(e.FullPath);
+            if (!result.Applied)
+            {
+                return;
+            }
+
+            _logger.Info(
+                $"transcript interrupt session={result.SessionId} " +
+                $"timestamp={result.Timestamp:O} match={result.MatchKind}");
+            ScheduleReload();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, $"transcript watcher failed path={e.FullPath}");
+        }
     }
 
     private async Task ReloadSessionsAsync()
@@ -301,6 +348,33 @@ public partial class MainWindow : Window
         _ = ReloadSessionsAsync();
     }
 
+    private void BindTerminal_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetSession(sender, out var session)) return;
+
+        try
+        {
+            _terminalBridge.PrepareManualBinding(
+                session.SessionId,
+                session.WorkingDirectory,
+                session.ProjectName);
+            HooksStatusText.Text =
+                $"Binding ready for {session.ShortSessionId}; select a VS Code terminal and run the bind command.";
+            System.Windows.MessageBox.Show(
+                this,
+                $"In VS Code, select the terminal for {session.DisplayName}, then run:\n\n" +
+                "CC Monitor: Bind Active Terminal to Session",
+                "Bind Terminal",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            HooksStatusText.Text = $"Could not prepare terminal binding: {session.ProjectName}";
+            _logger.Error(ex, "prepare terminal binding failed");
+        }
+    }
+
     private void RestoreSession_Click(object sender, RoutedEventArgs e)
     {
         if (!TryGetSession(sender, out var session)) return;
@@ -350,6 +424,7 @@ public partial class MainWindow : Window
             var terminalResult = await _terminalBridge.RequestFocusAsync(
                 session.SessionId,
                 session.TerminalToken,
+                session.TerminalProcessId,
                 session.WorkingDirectory,
                 session.ProjectName);
 
@@ -361,11 +436,18 @@ public partial class MainWindow : Window
 
             if (terminalResult.Status == TerminalFocusStatus.Matched)
             {
-                var matchedWindowResult = VsCodeWindowActivator.TryActivate(
-                    session.WorkingDirectory,
-                    string.IsNullOrWhiteSpace(terminalResult.WorkspaceName)
-                        ? session.ProjectName
-                        : terminalResult.WorkspaceName);
+                var extensionFocusedWindow = terminalResult.WindowFocused == true;
+                var matchedWindowResult = extensionFocusedWindow
+                    ? new VsCodeWindowActivationResult(
+                        true,
+                        "",
+                        terminalResult.WindowFocusReason,
+                        1)
+                    : VsCodeWindowActivator.TryActivate(
+                        session.WorkingDirectory,
+                        string.IsNullOrWhiteSpace(terminalResult.WorkspaceName)
+                            ? session.ProjectName
+                            : terminalResult.WorkspaceName);
                 HooksStatusText.Text = matchedWindowResult.Activated
                     ? $"Focused terminal: {terminalResult.TerminalName}"
                     : $"Selected terminal, but VS Code could not be brought forward: {session.ProjectName}";
@@ -374,8 +456,18 @@ public partial class MainWindow : Window
                     $"pid={terminalResult.TerminalProcessId?.ToString() ?? "n/a"} " +
                     $"bridge={terminalResult.BridgeId} workspace={terminalResult.WorkspaceName} " +
                     $"match={terminalResult.MatchKind} terminal={terminalResult.TerminalName} " +
+                    $"bridgeWindowFocused={terminalResult.WindowFocused?.ToString() ?? "n/a"} " +
+                    $"bridgeWindowReason={terminalResult.WindowFocusReason} " +
                     $"windowActivated={matchedWindowResult.Activated} windowTitle={matchedWindowResult.MatchedTitle} " +
                     $"windowReason={matchedWindowResult.Reason}");
+                return;
+            }
+
+            if (terminalResult.MatchKind is "manualTerminalNotRegistered" or "ambiguousManualBinding")
+            {
+                HooksStatusText.Text = terminalResult.MatchKind == "manualTerminalNotRegistered"
+                    ? $"Bound terminal is no longer running. Bind terminal again: {session.ProjectName}"
+                    : $"Manual terminal binding is ambiguous. Bind terminal again: {session.ProjectName}";
                 return;
             }
 
@@ -384,7 +476,9 @@ public partial class MainWindow : Window
             {
                 HooksStatusText.Text = terminalResult.MatchKind switch
                 {
-                    "ambiguousExactWorkingDirectory" or "ambiguousWorkingDirectory"
+                    "ambiguousExactWorkingDirectory"
+                        or "ambiguousWorkingDirectory"
+                        or "ambiguousSessionWorkingDirectory"
                         => $"Multiple terminals match. Run “CC Monitor: Migrate Active Terminal” in VS Code.",
                     "terminalTokenNotRegistered"
                         => $"Managed terminal is not registered. Reload VS Code or restart Claude in a managed terminal.",
@@ -568,6 +662,7 @@ public partial class MainWindow : Window
         }
 
         _watcher?.Dispose();
+        _transcriptWatcher?.Dispose();
         _notifyIcon?.Dispose();
     }
 
@@ -577,6 +672,7 @@ public partial class MainWindow : Window
         ClaudeSessionStatus.Error => 4,
         ClaudeSessionStatus.Running => 3,
         ClaudeSessionStatus.Done => 2,
+        ClaudeSessionStatus.Interrupted => 2,
         ClaudeSessionStatus.Idle => 1,
         ClaudeSessionStatus.Stale => 1,
         _ => 0

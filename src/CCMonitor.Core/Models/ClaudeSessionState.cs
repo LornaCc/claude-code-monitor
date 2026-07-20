@@ -14,7 +14,9 @@ public sealed class ClaudeSessionState
     public DateTimeOffset? BlockedAt { get; set; }
     public DateTimeOffset? FinishedAt { get; set; }
     public DateTimeOffset? FailedAt { get; set; }
+    public DateTimeOffset? InterruptedAt { get; set; }
     public string? BlockedReason { get; set; }
     public string? PromptPreview { get; set; }
     public string? LastHookEvent { get; set; }
+    public string? SupersededBySessionId { get; set; }
 }

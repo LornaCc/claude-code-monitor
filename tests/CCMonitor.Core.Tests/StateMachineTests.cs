@@ -21,6 +21,7 @@ public sealed class StateMachineTests
     [Theory]
     [InlineData(ClaudeSessionStatus.Idle)]
     [InlineData(ClaudeSessionStatus.Done)]
+    [InlineData(ClaudeSessionStatus.Interrupted)]
     [InlineData(ClaudeSessionStatus.Error)]
     [InlineData(ClaudeSessionStatus.Blocked)]
     public void UserPromptSubmit_sets_running(ClaudeSessionStatus from)
@@ -70,16 +71,78 @@ public sealed class StateMachineTests
     }
 
     [Fact]
-    public void StopFailure_sets_error()
+    public void StopFailure_sets_interrupted()
     {
         var state = NewState(ClaudeSessionStatus.Running);
         state.BlockedAt = DateTimeOffset.Now;
         state.BlockedReason = "Permission required: Bash";
         _machine.Apply(state, Event(HookEventKind.StopFailure), _config);
-        Assert.Equal(ClaudeSessionStatus.Error, state.Status);
-        Assert.NotNull(state.FailedAt);
+        Assert.Equal(ClaudeSessionStatus.Interrupted, state.Status);
+        Assert.NotNull(state.FinishedAt);
+        Assert.Null(state.FailedAt);
         Assert.Null(state.BlockedAt);
         Assert.Null(state.BlockedReason);
+    }
+
+    [Fact]
+    public void Stop_preserves_transcript_interrupted_state()
+    {
+        var interruptedAt = DateTimeOffset.Now.AddSeconds(-1);
+        var state = NewState(ClaudeSessionStatus.Interrupted);
+        state.InterruptedAt = interruptedAt;
+        state.FinishedAt = interruptedAt;
+
+        _machine.Apply(
+            state,
+            Event(HookEventKind.Stop),
+            _config,
+            interruptedAt.AddSeconds(10));
+
+        Assert.Equal(ClaudeSessionStatus.Interrupted, state.Status);
+        Assert.Equal(interruptedAt, state.FinishedAt);
+    }
+
+    [Fact]
+    public void New_prompt_clears_previous_interrupt_marker()
+    {
+        var state = NewState(ClaudeSessionStatus.Interrupted);
+        state.InterruptedAt = DateTimeOffset.Now.AddSeconds(-1);
+
+        _machine.Apply(state, Event(HookEventKind.UserPromptSubmit), _config);
+
+        Assert.Equal(ClaudeSessionStatus.Running, state.Status);
+        Assert.Null(state.InterruptedAt);
+    }
+
+    [Fact]
+    public void Delayed_permission_event_does_not_overwrite_interrupted_state()
+    {
+        var interruptedAt = DateTimeOffset.Now.AddSeconds(-1);
+        var state = NewState(ClaudeSessionStatus.Interrupted);
+        state.InterruptedAt = interruptedAt;
+
+        _machine.Apply(
+            state,
+            Event(HookEventKind.PermissionRequest, toolName: "WebSearch"),
+            _config);
+
+        Assert.Equal(ClaudeSessionStatus.Interrupted, state.Status);
+        Assert.Equal(interruptedAt, state.InterruptedAt);
+        Assert.Null(state.BlockedAt);
+    }
+
+    [Fact]
+    public void Hook_terminal_process_id_is_persisted()
+    {
+        var state = NewState(ClaudeSessionStatus.Idle);
+        var hookEvent = Event(HookEventKind.UserPromptSubmit) with
+        {
+            TerminalProcessId = 24680
+        };
+
+        _machine.Apply(state, hookEvent, _config);
+
+        Assert.Equal(24680, state.TerminalProcessId);
     }
 
     [Fact]
