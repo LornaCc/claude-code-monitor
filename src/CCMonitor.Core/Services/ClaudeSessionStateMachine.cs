@@ -11,6 +11,15 @@ public sealed class ClaudeSessionStateMachine
         state.UpdatedAt = timestamp;
         state.LastHookEvent = hookEvent.RawEventName;
 
+        if (hookEvent.Kind == HookEventKind.SessionStart)
+        {
+            // A resumed conversation can start in a different terminal than the one
+            // that last owned this session id. Never carry that terminal identity
+            // across a new Claude runtime attachment.
+            state.TerminalToken = "";
+            state.TerminalProcessId = null;
+        }
+
         if (!string.IsNullOrWhiteSpace(hookEvent.TerminalToken))
         {
             state.TerminalToken = hookEvent.TerminalToken!;
@@ -32,6 +41,7 @@ public sealed class ClaudeSessionStateMachine
             case HookEventKind.SessionStart:
                 state.Status = ClaudeSessionStatus.Idle;
                 state.InterruptedAt = null;
+                state.SupersededBySessionId = null;
                 break;
             case HookEventKind.UserPromptSubmit:
                 state.Status = ClaudeSessionStatus.Running;
@@ -42,6 +52,7 @@ public sealed class ClaudeSessionStateMachine
                 state.InterruptedAt = null;
                 state.BlockedReason = null;
                 state.PromptPreview = config.SavePromptPreview ? Truncate(hookEvent.Prompt, 100) : null;
+                state.SupersededBySessionId = null;
                 break;
             case HookEventKind.PermissionRequest:
             case HookEventKind.NotificationPermissionPrompt:
@@ -96,6 +107,8 @@ public sealed class ClaudeSessionStateMachine
                 break;
             case HookEventKind.SessionEnd:
                 state.Status = ClaudeSessionStatus.Closed;
+                state.TerminalToken = "";
+                state.TerminalProcessId = null;
                 break;
         }
     }

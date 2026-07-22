@@ -281,6 +281,82 @@ public sealed class TerminalBridgeRegistryTests
     }
 
     [Fact]
+    public void Select_uses_the_window_where_a_duplicated_bound_terminal_is_active()
+    {
+        var activeOwner = Bridge(
+            "active-owner",
+            "",
+            [],
+            [Terminal("bound", @"C:\work\project") with { ProcessId = 9001 }]) with
+        {
+            ActiveTerminalProcessId = 9001
+        };
+        var staleOwner = Bridge(
+            "stale-owner",
+            "project",
+            [@"C:\work\project"],
+            [
+                Terminal("bound", @"C:\work\project") with { ProcessId = 9001 },
+                Terminal("other", @"C:\work\project") with { ProcessId = 9002 }
+            ]) with
+        {
+            ActiveTerminalProcessId = 9002
+        };
+        var binding = new ManualTerminalBinding(
+            "session",
+            "",
+            9001,
+            "bound",
+            @"C:\work\project",
+            DateTimeOffset.UtcNow);
+
+        var selected = _registry.Select(
+            [staleOwner, activeOwner],
+            "",
+            @"C:\work\project",
+            "project",
+            binding);
+
+        Assert.True(selected.IsMatch);
+        Assert.Equal("active-owner", selected.Bridge!.BridgeId);
+        Assert.Equal("manualBindingActiveTerminal", selected.MatchKind);
+    }
+
+    [Fact]
+    public void Select_uses_explicit_bridge_when_a_bound_terminal_is_duplicated()
+    {
+        var oldWindow = Bridge(
+            "old-window",
+            "project",
+            [@"C:\work\project"],
+            [Terminal("bound", @"C:\work\project") with { ProcessId = 9001 }]);
+        var newWindow = Bridge(
+            "new-window",
+            "",
+            [],
+            [Terminal("bound", @"C:\work\project") with { ProcessId = 9001 }]);
+        var binding = new ManualTerminalBinding(
+            "session",
+            "",
+            9001,
+            "bound",
+            @"C:\work\project",
+            DateTimeOffset.UtcNow,
+            "new-window");
+
+        var selected = _registry.Select(
+            [oldWindow, newWindow],
+            "",
+            @"C:\work\project",
+            "project",
+            binding);
+
+        Assert.True(selected.IsMatch);
+        Assert.Equal("new-window", selected.Bridge!.BridgeId);
+        Assert.Equal("manualBindingBridge", selected.MatchKind);
+    }
+
+    [Fact]
     public void Select_uses_observed_terminal_process_id_before_cwd()
     {
         var expected = Bridge(

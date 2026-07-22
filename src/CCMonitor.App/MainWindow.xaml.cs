@@ -421,6 +421,11 @@ public partial class MainWindow : Window
         try
         {
             HooksStatusText.Text = $"Finding terminal: {session.ProjectName}";
+            var foregroundGrant = VsCodeWindowActivator.TryAllowBridgeForegroundActivation();
+            _logger.Info(
+                $"foreground activation grant session={session.SessionId} " +
+                $"granted={foregroundGrant.Granted} win32Error={foregroundGrant.Win32Error}");
+
             var terminalResult = await _terminalBridge.RequestFocusAsync(
                 session.SessionId,
                 session.TerminalToken,
@@ -436,7 +441,9 @@ public partial class MainWindow : Window
 
             if (terminalResult.Status == TerminalFocusStatus.Matched)
             {
-                var extensionFocusedWindow = terminalResult.WindowFocused == true;
+                var codeWindowActuallyForeground = VsCodeWindowActivator.IsCodeWindowForeground();
+                var extensionFocusedWindow = terminalResult.WindowFocused == true
+                    && codeWindowActuallyForeground;
                 var matchedWindowResult = extensionFocusedWindow
                     ? new VsCodeWindowActivationResult(
                         true,
@@ -457,6 +464,7 @@ public partial class MainWindow : Window
                     $"bridge={terminalResult.BridgeId} workspace={terminalResult.WorkspaceName} " +
                     $"match={terminalResult.MatchKind} terminal={terminalResult.TerminalName} " +
                     $"bridgeWindowFocused={terminalResult.WindowFocused?.ToString() ?? "n/a"} " +
+                    $"codeWindowActuallyForeground={codeWindowActuallyForeground} " +
                     $"bridgeWindowReason={terminalResult.WindowFocusReason} " +
                     $"windowActivated={matchedWindowResult.Activated} windowTitle={matchedWindowResult.MatchedTitle} " +
                     $"windowReason={matchedWindowResult.Reason}");
@@ -471,6 +479,16 @@ public partial class MainWindow : Window
                 return;
             }
 
+            if (terminalResult.MatchKind is "ambiguousExactWorkingDirectory"
+                or "ambiguousWorkingDirectory"
+                or "ambiguousSessionWorkingDirectory")
+            {
+                _terminalBridge.PrepareManualBinding(
+                    session.SessionId,
+                    session.WorkingDirectory,
+                    session.ProjectName);
+            }
+
             var windowResult = VsCodeWindowActivator.TryActivate(session.WorkingDirectory, session.ProjectName);
             if (windowResult.Activated)
             {
@@ -479,7 +497,7 @@ public partial class MainWindow : Window
                     "ambiguousExactWorkingDirectory"
                         or "ambiguousWorkingDirectory"
                         or "ambiguousSessionWorkingDirectory"
-                        => $"Multiple terminals match. Run “CC Monitor: Migrate Active Terminal” in VS Code.",
+                        => $"Multiple sessions share this cwd. Select the correct terminal and run CC Monitor: Bind Active Terminal to Session.",
                     "terminalTokenNotRegistered"
                         => $"Managed terminal is not registered. Reload VS Code or restart Claude in a managed terminal.",
                     _ when terminalResult.Status == TerminalFocusStatus.BridgeNotRunning

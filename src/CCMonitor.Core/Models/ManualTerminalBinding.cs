@@ -6,4 +6,5 @@ public sealed record ManualTerminalBinding(
     int? TerminalProcessId,
     string TerminalName,
     string WorkingDirectory,
-    DateTimeOffset UpdatedAtUtc);
+    DateTimeOffset UpdatedAtUtc,
+    string BridgeId = "");

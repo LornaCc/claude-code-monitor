@@ -13,10 +13,10 @@ public sealed class TerminalSessionReconciler
 
     public async Task<IReadOnlyList<string>> CloseSupersededSessionsAsync(
         ClaudeSessionState current,
+        TerminalIdentityResolution terminalIdentity,
         DateTimeOffset? now = null)
     {
-        if (string.IsNullOrWhiteSpace(current.TerminalToken)
-            && current.TerminalProcessId is not > 0)
+        if (!terminalIdentity.CanSupersedeSessions)
         {
             return [];
         }

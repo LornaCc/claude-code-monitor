@@ -73,6 +73,38 @@ public sealed class TerminalBridgeRegistry
                 .Where(bridge => (bridge.Terminals ?? []).Any(
                     terminal => MatchesManualBinding(terminal, manualBinding)))
                 .ToList();
+            var activeBindingMatches = bindingMatches
+                .Where(bridge => ActiveTerminalMatches(
+                    bridge,
+                    terminal => MatchesManualBinding(terminal, manualBinding)))
+                .ToList();
+            if (activeBindingMatches.Count == 1)
+            {
+                return new TerminalBridgeSelection(
+                    activeBindingMatches[0],
+                    "manualBindingActiveTerminal",
+                    $"Selected bridge {activeBindingMatches[0].BridgeId} because the bound terminal is active in that window.",
+                    liveBridges.Count);
+            }
+
+            if (!string.IsNullOrWhiteSpace(manualBinding.BridgeId))
+            {
+                var boundBridgeMatches = bindingMatches
+                    .Where(bridge => string.Equals(
+                        bridge.BridgeId,
+                        manualBinding.BridgeId,
+                        StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                if (boundBridgeMatches.Count == 1)
+                {
+                    return new TerminalBridgeSelection(
+                        boundBridgeMatches[0],
+                        "manualBindingBridge",
+                        $"Selected explicitly bound bridge {boundBridgeMatches[0].BridgeId}.",
+                        liveBridges.Count);
+                }
+            }
+
             if (bindingMatches.Count == 1)
             {
                 return new TerminalBridgeSelection(
@@ -101,6 +133,20 @@ public sealed class TerminalBridgeRegistry
                     terminal => NormalizeToken(terminal.TerminalToken) == requestedToken))
                 .ToList();
 
+            var activeTokenMatches = tokenMatches
+                .Where(bridge => ActiveTerminalMatches(
+                    bridge,
+                    terminal => NormalizeToken(terminal.TerminalToken) == requestedToken))
+                .ToList();
+            if (activeTokenMatches.Count == 1)
+            {
+                return new TerminalBridgeSelection(
+                    activeTokenMatches[0],
+                    "terminalTokenActiveTerminal",
+                    $"Selected bridge {activeTokenMatches[0].BridgeId} because the tokenized terminal is active in that window.",
+                    liveBridges.Count);
+            }
+
             if (tokenMatches.Count == 1)
             {
                 return new TerminalBridgeSelection(
@@ -125,6 +171,18 @@ public sealed class TerminalBridgeRegistry
                 .Where(bridge => (bridge.Terminals ?? []).Any(
                     terminal => terminal.ProcessId == preferredTerminalProcessId))
                 .ToList();
+            var activeProcessMatches = processMatches
+                .Where(bridge => bridge.ActiveTerminalProcessId == preferredTerminalProcessId)
+                .ToList();
+            if (activeProcessMatches.Count == 1)
+            {
+                return new TerminalBridgeSelection(
+                    activeProcessMatches[0],
+                    "terminalProcessIdActiveTerminal",
+                    $"Selected bridge {activeProcessMatches[0].BridgeId} because the terminal process is active in that window.",
+                    liveBridges.Count);
+            }
+
             if (processMatches.Count == 1)
             {
                 return new TerminalBridgeSelection(
@@ -257,7 +315,7 @@ public sealed class TerminalBridgeRegistry
         return new ScoredBridge(bridge, bestScore, matchKind);
     }
 
-    internal static string NormalizePath(string? value)
+    public static string NormalizePath(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return "";
         try
@@ -370,6 +428,14 @@ public sealed class TerminalBridgeRegistry
         return binding.TerminalProcessId is not null
             && terminal.ProcessId == binding.TerminalProcessId;
     }
+
+    private static bool ActiveTerminalMatches(
+        TerminalBridgeRegistration bridge,
+        Func<TerminalBridgeTerminal, bool> predicate)
+        => bridge.ActiveTerminalProcessId is > 0
+            && (bridge.Terminals ?? []).Any(terminal =>
+                terminal.ProcessId == bridge.ActiveTerminalProcessId
+                && predicate(terminal));
 
     private sealed record ScoredBridge(
         TerminalBridgeRegistration Bridge,

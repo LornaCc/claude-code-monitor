@@ -18,6 +18,39 @@ public sealed class StateMachineTests
         Assert.Equal(ClaudeSessionStatus.Idle, state.Status);
     }
 
+    [Fact]
+    public void SessionStart_replaces_stale_terminal_identity()
+    {
+        var state = NewState(ClaudeSessionStatus.Closed);
+        state.TerminalToken = "old-terminal-token";
+        state.TerminalProcessId = 11111;
+        state.SupersededBySessionId = "replacement-session";
+
+        _machine.Apply(
+            state,
+            Event(HookEventKind.SessionStart) with
+            {
+                TerminalProcessId = 22222
+            },
+            _config);
+
+        Assert.Equal("", state.TerminalToken);
+        Assert.Equal(22222, state.TerminalProcessId);
+        Assert.Null(state.SupersededBySessionId);
+    }
+
+    [Fact]
+    public void Resumed_prompt_clears_superseded_marker()
+    {
+        var state = NewState(ClaudeSessionStatus.Closed);
+        state.SupersededBySessionId = "replacement-session";
+
+        _machine.Apply(state, Event(HookEventKind.UserPromptSubmit), _config);
+
+        Assert.Equal(ClaudeSessionStatus.Running, state.Status);
+        Assert.Null(state.SupersededBySessionId);
+    }
+
     [Theory]
     [InlineData(ClaudeSessionStatus.Idle)]
     [InlineData(ClaudeSessionStatus.Done)]
@@ -149,8 +182,12 @@ public sealed class StateMachineTests
     public void SessionEnd_sets_closed()
     {
         var state = NewState(ClaudeSessionStatus.Blocked);
+        state.TerminalToken = "terminal-token";
+        state.TerminalProcessId = 24680;
         _machine.Apply(state, Event(HookEventKind.SessionEnd), _config);
         Assert.Equal(ClaudeSessionStatus.Closed, state.Status);
+        Assert.Equal("", state.TerminalToken);
+        Assert.Null(state.TerminalProcessId);
     }
 
     private static ClaudeSessionState NewState(ClaudeSessionStatus status) => new()

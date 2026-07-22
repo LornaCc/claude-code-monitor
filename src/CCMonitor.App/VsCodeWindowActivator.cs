@@ -8,6 +8,35 @@ namespace CCMonitor.App;
 public static class VsCodeWindowActivator
 {
     private const int SwRestore = 9;
+    private const uint AsfwAny = uint.MaxValue;
+
+    public static ForegroundActivationGrantResult TryAllowBridgeForegroundActivation()
+    {
+        // This is intentionally called directly from the session-card click handler.
+        // At that point CC Monitor owns the foreground permission granted by the user's
+        // click and can briefly pass it to the VS Code process handling the bridge request.
+        var granted = AllowSetForegroundWindow(AsfwAny);
+        return new ForegroundActivationGrantResult(
+            granted,
+            granted ? 0 : Marshal.GetLastWin32Error());
+    }
+
+    public static bool IsCodeWindowForeground()
+    {
+        var handle = GetForegroundWindow();
+        if (handle == IntPtr.Zero) return false;
+
+        GetWindowThreadProcessId(handle, out var processId);
+        try
+        {
+            using var process = Process.GetProcessById((int)processId);
+            return string.Equals(process.ProcessName, "Code", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     public static VsCodeWindowActivationResult TryActivate(string workingDirectory, string projectName)
     {
@@ -153,7 +182,16 @@ public static class VsCodeWindowActivator
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AllowSetForegroundWindow(uint processId);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
 }
+
+public sealed record ForegroundActivationGrantResult(bool Granted, int Win32Error);
 
 public sealed record VsCodeWindowActivationResult(
     bool Activated,

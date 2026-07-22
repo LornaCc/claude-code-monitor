@@ -55,7 +55,7 @@ try
     var config = new MonitorConfigStore(paths).LoadOrCreate();
     var store = new ClaudeSessionStateStore(paths);
     var stateMachine = new ClaudeSessionStateMachine();
-    var terminalIdentity = new TerminalIdentityResolver(paths).Resolve(hookEvent);
+    var terminalIdentity = await new TerminalIdentityResolver(paths).ResolveAsync(hookEvent);
     hookEvent = hookEvent with
     {
         TerminalToken = string.IsNullOrWhiteSpace(terminalIdentity.TerminalToken)
@@ -84,7 +84,7 @@ try
             && hookEvent.Kind is HookEventKind.SessionStart or HookEventKind.UserPromptSubmit)
         {
             var closed = await new TerminalSessionReconciler(store)
-                .CloseSupersededSessionsAsync(currentState);
+                .CloseSupersededSessionsAsync(currentState, terminalIdentity);
             if (closed.Count > 0)
             {
                 logger.Info(
@@ -101,6 +101,11 @@ try
     else
     {
         await ProcessEventAsync();
+    }
+
+    if (hookEvent.Kind == HookEventKind.SessionEnd)
+    {
+        new ManualTerminalBindingStore(paths).Delete(hookEvent.SessionId);
     }
 }
 catch (Exception ex)

@@ -6,10 +6,12 @@ namespace CCMonitor.Core.Services;
 public sealed class TerminalIdentityResolver
 {
     private readonly TerminalBridgeRegistry _registry;
+    private readonly ClaudeSessionStateStore _stateStore;
 
     public TerminalIdentityResolver(CcMonitorPaths paths)
     {
         _registry = new TerminalBridgeRegistry(paths);
+        _stateStore = new ClaudeSessionStateStore(paths);
     }
 
     public TerminalIdentityResolution Resolve(HookEvent hookEvent)
@@ -17,6 +19,57 @@ public sealed class TerminalIdentityResolver
             _registry.LoadLive(),
             hookEvent.TerminalToken,
             hookEvent.WorkingDirectory);
+
+    public async Task<TerminalIdentityResolution> ResolveAsync(HookEvent hookEvent)
+    {
+        var liveBridges = _registry.LoadLive();
+        var direct = Resolve(
+            liveBridges,
+            hookEvent.TerminalToken,
+            hookEvent.WorkingDirectory);
+        if (direct.HasIdentity || !string.IsNullOrWhiteSpace(hookEvent.TerminalToken))
+        {
+            return direct;
+        }
+
+        var normalizedDirectory = TerminalBridgeRegistry.NormalizePath(hookEvent.WorkingDirectory);
+        if (normalizedDirectory.Length == 0)
+        {
+            return direct;
+        }
+
+        var exactTerminalProcessIds = liveBridges
+            .SelectMany(bridge => bridge.Terminals ?? [])
+            .Where(terminal =>
+                terminal.ProcessId is > 0
+                && TerminalBridgeRegistry.NormalizePath(terminal.WorkingDirectory) == normalizedDirectory)
+            .Select(terminal => terminal.ProcessId!.Value)
+            .Distinct()
+            .ToList();
+        if (exactTerminalProcessIds.Count < 2)
+        {
+            return direct;
+        }
+
+        var claimedByOtherSessions = (await _stateStore.LoadAllAsync())
+            .Where(state =>
+                !string.Equals(state.SessionId, hookEvent.SessionId, StringComparison.OrdinalIgnoreCase)
+                && state.Status != ClaudeSessionStatus.Closed
+                && TerminalBridgeRegistry.NormalizePath(state.WorkingDirectory) == normalizedDirectory
+                && state.TerminalProcessId is > 0)
+            .Select(state => state.TerminalProcessId!.Value)
+            .ToHashSet();
+        var unclaimed = exactTerminalProcessIds
+            .Where(processId => !claimedByOtherSessions.Contains(processId))
+            .ToList();
+        return unclaimed.Count == 1
+            ? new TerminalIdentityResolution(
+                "",
+                unclaimed[0],
+                "uniqueUnclaimedExactWorkingDirectory",
+                "Resolved the only exact-cwd terminal not owned by another session.")
+            : direct;
+    }
 
     internal static TerminalIdentityResolution Resolve(
         IReadOnlyList<TerminalBridgeRegistration> liveBridges,
@@ -95,6 +148,9 @@ public sealed record TerminalIdentityResolution(
 {
     public bool HasIdentity
         => !string.IsNullOrWhiteSpace(TerminalToken) || TerminalProcessId is > 0;
+
+    public bool CanSupersedeSessions
+        => !string.IsNullOrWhiteSpace(TerminalToken);
 
     public string LockKey => !string.IsNullOrWhiteSpace(TerminalToken)
         ? $"token:{TerminalToken.Trim().ToLowerInvariant()}"

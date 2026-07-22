@@ -35,6 +35,10 @@ function activate(context) {
           vscode.window.terminals.map((terminal) =>
             snapshotTerminal(terminal, managedTokens, output))
         );
+        const activeTerminal = vscode.window.activeTerminal;
+        const activeTerminalIndex = activeTerminal
+          ? vscode.window.terminals.indexOf(activeTerminal)
+          : -1;
         const registration = {
           protocolVersion: 3,
           bridgeId,
@@ -44,7 +48,11 @@ function activate(context) {
           workspaceFolders: (vscode.workspace.workspaceFolders || []).map(
             (folder) => folder.uri.fsPath
           ),
-          terminals
+          terminals,
+          activeTerminalProcessId: activeTerminalIndex >= 0
+            ? terminals[activeTerminalIndex]?.processId
+            : undefined,
+          windowFocused: vscode.window.state.focused
         };
         await writeAtomic(registrationFile, registration);
       })
@@ -133,7 +141,8 @@ function activate(context) {
       terminalProcessId: snapshot.processId,
       terminalName: snapshot.name,
       workingDirectory: snapshot.workingDirectory,
-      updatedAtUtc: new Date().toISOString()
+      updatedAtUtc: new Date().toISOString(),
+      bridgeId
     };
     await writeAtomic(
       path.join(terminalBindingsDirectory, `${sanitizeFileName(session.sessionId)}.json`),
@@ -250,6 +259,7 @@ function activate(context) {
         .finally(refreshRegistration);
     }),
     vscode.window.onDidChangeActiveTerminal(refreshRegistration),
+    vscode.window.onDidChangeWindowState(refreshRegistration),
     vscode.workspace.onDidChangeWorkspaceFolders(refreshRegistration),
     vscode.commands.registerCommand('ccMonitor.focusTerminal', processRequest),
     vscode.commands.registerCommand(

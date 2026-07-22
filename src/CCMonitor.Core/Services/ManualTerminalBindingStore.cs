@@ -51,6 +51,22 @@ public sealed class ManualTerminalBindingStore
         }
     }
 
+    public void Delete(string sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return;
+        }
+
+        var path = Path.Combine(
+            _paths.TerminalBindingsDirectory,
+            $"{SanitizeFileName(sessionId)}.json");
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+        }
+    }
+
     private static string SanitizeFileName(string value)
     {
         var invalid = Path.GetInvalidFileNameChars();

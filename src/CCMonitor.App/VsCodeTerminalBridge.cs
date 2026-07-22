@@ -19,6 +19,7 @@ public sealed class VsCodeTerminalBridge
     private readonly string _bindingRequestPath;
     private readonly TerminalBridgeRegistry _registry;
     private readonly ManualTerminalBindingStore _bindingStore;
+    private readonly ClaudeSessionStateStore _stateStore;
 
     public VsCodeTerminalBridge(CcMonitorPaths paths)
     {
@@ -27,6 +28,7 @@ public sealed class VsCodeTerminalBridge
         _bindingRequestPath = Path.Combine(paths.RootDirectory, "bind-terminal-session.json");
         _registry = new TerminalBridgeRegistry(paths);
         _bindingStore = new ManualTerminalBindingStore(paths);
+        _stateStore = new ClaudeSessionStateStore(paths);
     }
 
     public async Task<TerminalFocusResult> RequestFocusAsync(
@@ -39,13 +41,31 @@ public sealed class VsCodeTerminalBridge
     {
         var liveBridges = _registry.LoadLive();
         var manualBinding = _bindingStore.TryLoad(sessionId);
+        var preferredTerminalProcessId = terminalProcessId;
+        if (manualBinding is null
+            && string.IsNullOrWhiteSpace(terminalToken)
+            && terminalProcessId is > 0)
+        {
+            var normalizedDirectory = TerminalBridgeRegistry.NormalizePath(workingDirectory);
+            var hasConflictingOwner = normalizedDirectory.Length > 0
+                && (await _stateStore.LoadAllAsync()).Any(state =>
+                !string.Equals(state.SessionId, sessionId, StringComparison.OrdinalIgnoreCase)
+                && state.Status != CCMonitor.Core.Models.ClaudeSessionStatus.Closed
+                && state.TerminalProcessId == terminalProcessId
+                && TerminalBridgeRegistry.NormalizePath(state.WorkingDirectory) == normalizedDirectory);
+            if (hasConflictingOwner)
+            {
+                preferredTerminalProcessId = null;
+            }
+        }
+
         var selection = _registry.Select(
             liveBridges,
             terminalToken,
             workingDirectory,
             projectName,
             manualBinding,
-            terminalProcessId);
+            preferredTerminalProcessId);
         if (!selection.IsMatch)
         {
             return new TerminalFocusResult(
@@ -71,7 +91,9 @@ public sealed class VsCodeTerminalBridge
             sessionId,
             manualBinding?.TerminalToken ?? terminalToken,
             manualBinding?.TerminalProcessId
-                ?? (selection.MatchKind == "terminalProcessId" ? terminalProcessId : null),
+                ?? (selection.MatchKind is "terminalProcessId" or "terminalProcessIdActiveTerminal"
+                    ? preferredTerminalProcessId
+                    : null),
             workingDirectory,
             projectName);
 

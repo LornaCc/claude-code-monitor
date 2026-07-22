@@ -7,7 +7,9 @@ public sealed record TerminalBridgeRegistration(
     DateTimeOffset UpdatedAtUtc,
     string WorkspaceName,
     IReadOnlyList<string> WorkspaceFolders,
-    IReadOnlyList<TerminalBridgeTerminal> Terminals);
+    IReadOnlyList<TerminalBridgeTerminal> Terminals,
+    int? ActiveTerminalProcessId = null,
+    bool WindowFocused = false);
 
 public sealed record TerminalBridgeTerminal(
     string TerminalId,
