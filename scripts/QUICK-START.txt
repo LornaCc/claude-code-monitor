@@ -1,0 +1,27 @@
+CC Monitor 0.4.1 - Windows x64
+================================
+
+INSTALL
+1. Extract the ZIP completely. Do not run the installer inside the ZIP preview.
+2. Double-click Install-CCMonitor.cmd.
+3. Wait for "Installation completed successfully".
+4. In every open VS Code window, run: Developer: Reload Window
+
+WHAT THE INSTALLER UPDATES
+- Stops every older CC Monitor App instance.
+- Installs this build to %LOCALAPPDATA%\Programs\CCMonitor\0.4.1.
+- Repoints all Claude Code hooks and StatusLine to this build.
+- Force-installs and verifies Terminal Bridge 0.4.1.
+- Updates the Start menu shortcut and starts this build.
+
+RECOMMENDED TERMINAL SETUP
+- Use "CC Monitor: Create Managed Claude Terminal" for a tokenized terminal.
+- If an existing terminal cannot be identified uniquely, use "Bind terminal..."
+  on the session and then "CC Monitor: Bind Active Terminal to Session" in VS Code.
+
+WINDOW FOCUS BEHAVIOR
+- A maximized VS Code window stays maximized.
+- A snapped or normally expanded VS Code window keeps its size and position.
+- Only a genuinely minimized window is restored.
+
+The package is self-contained. .NET and Node.js are not required.

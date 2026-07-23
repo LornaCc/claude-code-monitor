@@ -467,7 +467,10 @@ public partial class MainWindow : Window
                     $"codeWindowActuallyForeground={codeWindowActuallyForeground} " +
                     $"bridgeWindowReason={terminalResult.WindowFocusReason} " +
                     $"windowActivated={matchedWindowResult.Activated} windowTitle={matchedWindowResult.MatchedTitle} " +
-                    $"windowReason={matchedWindowResult.Reason}");
+                    $"windowReason={matchedWindowResult.Reason} " +
+                    $"windowInitialState={matchedWindowResult.InitialWindowState} " +
+                    $"windowFinalState={matchedWindowResult.FinalWindowState} " +
+                    $"windowRestoreInvoked={matchedWindowResult.RestoreInvoked}");
                 return;
             }
 
@@ -507,7 +510,10 @@ public partial class MainWindow : Window
                 _logger.Info(
                     $"focused vscode title fallback session={session.SessionId} " +
                     $"bridgeStatus={terminalResult.Status} match={terminalResult.MatchKind} " +
-                    $"title={windowResult.MatchedTitle}");
+                    $"title={windowResult.MatchedTitle} " +
+                    $"windowInitialState={windowResult.InitialWindowState} " +
+                    $"windowFinalState={windowResult.FinalWindowState} " +
+                    $"windowRestoreInvoked={windowResult.RestoreInvoked}");
             }
             else
             {

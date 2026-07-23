@@ -2,7 +2,7 @@
   "name": "cc-monitor-terminal-bridge",
   "displayName": "CC Monitor Terminal Bridge",
   "description": "Focuses the VS Code terminal associated with a CC Monitor session.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "publisher": "ccmonitor",
   "license": "MIT",
   "repository": {

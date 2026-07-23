@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.4.0",
+    [string]$Version = "0.4.1",
     [string]$Runtime = "win-x64"
 )
 
@@ -16,6 +16,9 @@ $artifactsDir = Join-Path $repoRoot "artifacts"
 $releaseName = "CCMonitor-v$Version-$Runtime"
 $releaseDir = Join-Path $artifactsDir $releaseName
 $archivePath = Join-Path $artifactsDir "$releaseName.zip"
+
+dotnet test (Join-Path $repoRoot "CCMonitor.sln") --configuration Release --nologo
+Assert-NativeCommandSucceeded "Release tests"
 
 New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
 if (Test-Path -LiteralPath $releaseDir) {
@@ -52,15 +55,24 @@ dotnet publish (Join-Path $repoRoot "src\CCMonitor.StatusLine\CCMonitor.StatusLi
 Assert-NativeCommandSucceeded "CCMonitor.StatusLine publish"
 
 Copy-Item -LiteralPath (Join-Path $repoRoot "README.md") -Destination $releaseDir -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot "README.en.md") -Destination $releaseDir -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot "CHANGELOG.md") -Destination $releaseDir -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "LICENSE") -Destination $releaseDir -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "scripts\install-hooks.ps1") -Destination $releaseDir -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "scripts\uninstall-hooks.ps1") -Destination $releaseDir -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot "scripts\Install-CCMonitor.ps1") -Destination $releaseDir -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot "scripts\Install-CCMonitor.cmd") -Destination $releaseDir -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot "scripts\Uninstall-CCMonitor.ps1") -Destination $releaseDir -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot "scripts\Uninstall-CCMonitor.cmd") -Destination $releaseDir -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot "scripts\QUICK-START.txt") -Destination $releaseDir -Force
 
 $extensionDir = Join-Path $repoRoot "vscode-extension"
 Push-Location $extensionDir
 try {
     & npm.cmd install --ignore-scripts
     Assert-NativeCommandSucceeded "VS Code extension dependency install"
+    & npm.cmd test
+    Assert-NativeCommandSucceeded "VS Code extension tests"
     & npm.cmd run package -- $Version --out "cc-monitor-terminal-bridge-$Version.vsix"
     Assert-NativeCommandSucceeded "VS Code extension package"
 }

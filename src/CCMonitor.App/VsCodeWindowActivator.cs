@@ -73,15 +73,40 @@ public static class VsCodeWindowActivator
         }
 
         var match = matches[0];
-        ShowWindow(match.Handle, SwRestore);
+        var activationPlan = CreateActivationPlan(
+            IsIconic(match.Handle),
+            IsZoomed(match.Handle));
+        if (activationPlan.RestoreBeforeActivation)
+        {
+            ShowWindow(match.Handle, SwRestore);
+        }
+
         BringWindowToTop(match.Handle);
         var activated = SetForegroundWindow(match.Handle);
+        var finalWindowState = DescribeWindowState(
+            IsIconic(match.Handle),
+            IsZoomed(match.Handle));
         return new VsCodeWindowActivationResult(
             activated,
             match.Title,
             activated ? "Matched a unique VS Code window title." : "Windows rejected foreground activation.",
-            1);
+            1,
+            activationPlan.InitialWindowState,
+            finalWindowState,
+            activationPlan.RestoreBeforeActivation);
     }
+
+    internal static WindowActivationPlan CreateActivationPlan(bool isMinimized, bool isMaximized)
+        => new(
+            DescribeWindowState(isMinimized, isMaximized),
+            RestoreBeforeActivation: isMinimized);
+
+    private static string DescribeWindowState(bool isMinimized, bool isMaximized)
+        => isMinimized
+            ? "minimized"
+            : isMaximized
+                ? "maximized"
+                : "normalOrArranged";
 
     private static IEnumerable<string> BuildCandidates(string workingDirectory, string projectName)
     {
@@ -178,6 +203,14 @@ public static class VsCodeWindowActivator
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
     [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsZoomed(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
     private static extern bool BringWindowToTop(IntPtr hWnd);
 
     [DllImport("user32.dll")]
@@ -197,4 +230,11 @@ public sealed record VsCodeWindowActivationResult(
     bool Activated,
     string MatchedTitle,
     string Reason,
-    int CandidateCount);
+    int CandidateCount,
+    string InitialWindowState = "",
+    string FinalWindowState = "",
+    bool RestoreInvoked = false);
+
+internal readonly record struct WindowActivationPlan(
+    string InitialWindowState,
+    bool RestoreBeforeActivation);

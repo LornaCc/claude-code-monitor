@@ -13,5 +13,12 @@ if (-not (Test-Path -LiteralPath $AppPath)) {
     throw "CCMonitor.App.exe was not found at: $AppPath"
 }
 
-& $AppPath --install-hooks
+$process = Start-Process -FilePath $AppPath `
+    -ArgumentList "--install-hooks" `
+    -WindowStyle Hidden `
+    -Wait `
+    -PassThru
+if ($process.ExitCode -ne 0) {
+    throw "CC Monitor hook installation failed with exit code $($process.ExitCode)."
+}
 Write-Host "CC Monitor hooks installed."

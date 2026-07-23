@@ -13,5 +13,12 @@ if (-not (Test-Path -LiteralPath $AppPath)) {
     throw "CCMonitor.App.exe was not found at: $AppPath"
 }
 
-& $AppPath --uninstall-hooks
+$process = Start-Process -FilePath $AppPath `
+    -ArgumentList "--uninstall-hooks" `
+    -WindowStyle Hidden `
+    -Wait `
+    -PassThru
+if ($process.ExitCode -ne 0) {
+    throw "CC Monitor hook removal failed with exit code $($process.ExitCode)."
+}
 Write-Host "CC Monitor hooks uninstalled."
