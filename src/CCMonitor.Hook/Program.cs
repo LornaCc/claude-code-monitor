@@ -13,7 +13,7 @@ try
 {
     paths.EnsureDirectories();
 
-    var input = await Console.In.ReadToEndAsync();
+    var input = await Utf8StandardInputReader.ReadAsync();
     var parser = new HookEventParser();
     var hookEvent = parser.Parse(input) with
     {

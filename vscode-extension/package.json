@@ -2,7 +2,7 @@
   "name": "cc-monitor-terminal-bridge",
   "displayName": "CC Monitor Terminal Bridge",
   "description": "Focuses the VS Code terminal associated with a CC Monitor session.",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "publisher": "ccmonitor",
   "license": "MIT",
   "repository": {
@@ -48,7 +48,7 @@
   },
   "scripts": {
     "package": "vsce package --no-dependencies",
-    "test": "node --test terminal-matcher.test.js"
+    "test": "node --test terminal-matcher.test.js terminal-token.test.js"
   },
   "devDependencies": {
     "@vscode/vsce": "^3.6.0"

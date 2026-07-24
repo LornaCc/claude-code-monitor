@@ -23,26 +23,60 @@ public sealed class TerminalIdentityResolver
     public async Task<TerminalIdentityResolution> ResolveAsync(HookEvent hookEvent)
     {
         var liveBridges = _registry.LoadLive();
+        if (!string.IsNullOrWhiteSpace(hookEvent.TerminalToken))
+        {
+            return Resolve(
+                liveBridges,
+                hookEvent.TerminalToken,
+                hookEvent.WorkingDirectory);
+        }
+
+        var normalizedDirectory = TerminalBridgeRegistry.NormalizePath(hookEvent.WorkingDirectory);
+        if (hookEvent.Kind is HookEventKind.SessionStart or HookEventKind.UserPromptSubmit)
+        {
+            var activeCandidates = liveBridges
+                .Where(bridge =>
+                    bridge.WindowFocused
+                    && bridge.ActiveTerminalProcessId is > 0)
+                .SelectMany(bridge => (bridge.Terminals ?? [])
+                    .Where(terminal =>
+                        terminal.ProcessId == bridge.ActiveTerminalProcessId
+                        && CanClaimActiveTerminal(
+                            terminal,
+                            bridge.WorkspaceFolders,
+                            normalizedDirectory)))
+                .ToList();
+            var activeProcessIds = activeCandidates
+                .Where(terminal => terminal.ProcessId is > 0)
+                .Select(terminal => terminal.ProcessId!.Value)
+                .Distinct()
+                .ToList();
+            if (activeProcessIds.Count == 1)
+            {
+                return FromTerminalCandidates(
+                    activeCandidates,
+                    activeProcessIds[0],
+                    "focusedActiveTerminal",
+                    "Claimed the active terminal in the focused VS Code window for a user-originated event.");
+            }
+        }
+
         var direct = Resolve(
             liveBridges,
             hookEvent.TerminalToken,
             hookEvent.WorkingDirectory);
-        if (direct.HasIdentity || !string.IsNullOrWhiteSpace(hookEvent.TerminalToken))
+        if (direct.HasIdentity || normalizedDirectory.Length == 0)
         {
             return direct;
         }
 
-        var normalizedDirectory = TerminalBridgeRegistry.NormalizePath(hookEvent.WorkingDirectory);
-        if (normalizedDirectory.Length == 0)
-        {
-            return direct;
-        }
-
-        var exactTerminalProcessIds = liveBridges
+        var exactTerminals = liveBridges
             .SelectMany(bridge => bridge.Terminals ?? [])
             .Where(terminal =>
                 terminal.ProcessId is > 0
                 && TerminalBridgeRegistry.NormalizePath(terminal.WorkingDirectory) == normalizedDirectory)
+            .ToList();
+        var exactTerminalProcessIds = exactTerminals
             .Select(terminal => terminal.ProcessId!.Value)
             .Distinct()
             .ToList();
@@ -63,8 +97,8 @@ public sealed class TerminalIdentityResolver
             .Where(processId => !claimedByOtherSessions.Contains(processId))
             .ToList();
         return unclaimed.Count == 1
-            ? new TerminalIdentityResolution(
-                "",
+            ? FromTerminalCandidates(
+                exactTerminals,
                 unclaimed[0],
                 "uniqueUnclaimedExactWorkingDirectory",
                 "Resolved the only exact-cwd terminal not owned by another session.")
@@ -119,14 +153,16 @@ public sealed class TerminalIdentityResolver
             .Where(terminal =>
                 TerminalBridgeRegistry.NormalizePath(terminal.WorkingDirectory) == normalizedDirectory
                 && terminal.ProcessId is > 0)
+            .ToList();
+        var cwdProcessIds = cwdMatches
             .Select(terminal => terminal.ProcessId!.Value)
             .Distinct()
             .ToList();
-        return cwdMatches.Count switch
+        return cwdProcessIds.Count switch
         {
-            1 => new TerminalIdentityResolution(
-                "",
-                cwdMatches[0],
+            1 => FromTerminalCandidates(
+                cwdMatches,
+                cwdProcessIds[0],
                 "uniqueExactWorkingDirectory",
                 "Resolved one live terminal process by exact working directory."),
             0 => TerminalIdentityResolution.None(
@@ -135,6 +171,59 @@ public sealed class TerminalIdentityResolver
                 "Multiple live terminals had the hook working directory.")
         };
     }
+
+    private static TerminalIdentityResolution FromTerminalCandidates(
+        IEnumerable<TerminalBridgeTerminal> candidates,
+        int processId,
+        string matchKind,
+        string reason)
+    {
+        var tokens = candidates
+            .Where(terminal => terminal.ProcessId == processId)
+            .Select(terminal => terminal.TerminalToken?.Trim() ?? "")
+            .Where(token => token.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return new TerminalIdentityResolution(
+            tokens.Count == 1 ? tokens[0] : "",
+            processId,
+            matchKind,
+            tokens.Count > 1
+                ? $"{reason} Multiple bridge tokens were registered for the same process, so only the PID was kept."
+                : reason);
+    }
+
+    private static bool CanClaimActiveTerminal(
+        TerminalBridgeTerminal terminal,
+        IReadOnlyList<string> workspaceFolders,
+        string normalizedDirectory)
+    {
+        if (normalizedDirectory.Length == 0)
+        {
+            return false;
+        }
+
+        var terminalDirectory = TerminalBridgeRegistry.NormalizePath(terminal.WorkingDirectory);
+        if (terminalDirectory.Length > 0)
+        {
+            return IsSameOrDescendant(normalizedDirectory, terminalDirectory)
+                || IsSameOrDescendant(terminalDirectory, normalizedDirectory);
+        }
+
+        return (workspaceFolders ?? [])
+            .Select(TerminalBridgeRegistry.NormalizePath)
+            .Where(folder => folder.Length > 0)
+            .Any(folder =>
+                IsSameOrDescendant(normalizedDirectory, folder)
+                || IsSameOrDescendant(folder, normalizedDirectory));
+    }
+
+    private static bool IsSameOrDescendant(string child, string parent)
+        => child == parent
+            || (child.Length > parent.Length
+                && child.StartsWith(
+                    parent + Path.DirectorySeparatorChar,
+                    StringComparison.OrdinalIgnoreCase));
 
     private static string NormalizeToken(string? value)
         => string.IsNullOrWhiteSpace(value) ? "" : value.Trim().ToLowerInvariant();

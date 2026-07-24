@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.3 - Unreleased
+
+- Assigned a persistent Bridge token to every ordinary VS Code terminal; Managed Terminal is no longer required for reliable token-based focusing.
+- Automatically claimed the compatible active terminal in the focused VS Code window on `SessionStart` and `UserPromptSubmit`, preserving both token and PID.
+- Preserved ordinary terminal tokens across extension reloads and shell cwd changes, with stale/ambiguous recovery protection.
+- Read Hook and StatusLine standard input explicitly as UTF-8 so non-ASCII working directories remain matchable.
+- Added polling fallback for focus requests when deleting and recreating `.cc-monitor` invalidates the original filesystem watcher.
+
 ## 0.4.2 - 2026-07-23
 
 - Preserved and migrated terminal identity across Claude Code `/clear`.

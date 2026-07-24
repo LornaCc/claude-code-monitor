@@ -8,7 +8,7 @@ var logger = new RollingLogger(Path.Combine(paths.LogsDirectory, "cc-monitor-sta
 try
 {
     paths.EnsureDirectories();
-    var input = await Console.In.ReadToEndAsync();
+    var input = await Utf8StandardInputReader.ReadAsync();
     if (string.IsNullOrWhiteSpace(input))
     {
         Console.Write("CC Monitor");

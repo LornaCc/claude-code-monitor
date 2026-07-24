@@ -12,5 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\CCMonitor.Core\CCMonitor.Core.csproj" />
+    <ProjectReference Include="..\..\src\CCMonitor.Hook\CCMonitor.Hook.csproj"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>

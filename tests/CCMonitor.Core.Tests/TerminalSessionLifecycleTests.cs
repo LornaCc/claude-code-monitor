@@ -26,7 +26,7 @@ public sealed class TerminalSessionLifecycleTests : IDisposable
             "one",
             new TerminalBridgeTerminal(
                 "terminal-one",
-                "",
+                "bridge-token-one",
                 "PowerShell",
                 26100,
                 @"C:\Users\admin"));
@@ -38,6 +38,7 @@ public sealed class TerminalSessionLifecycleTests : IDisposable
         });
 
         Assert.True(result.HasIdentity);
+        Assert.Equal("bridge-token-one", result.TerminalToken);
         Assert.Equal(26100, result.TerminalProcessId);
         Assert.Equal("uniqueExactWorkingDirectory", result.MatchKind);
     }
@@ -124,6 +125,139 @@ public sealed class TerminalSessionLifecycleTests : IDisposable
         var result = await new TerminalIdentityResolver(_paths).ResolveAsync(new HookEvent
         {
             SessionId = "session-without-owner",
+            WorkingDirectory = @"C:\Users\admin"
+        });
+
+        Assert.False(result.HasIdentity);
+        Assert.Equal("noMatch", result.MatchKind);
+    }
+
+    [Theory]
+    [InlineData(HookEventKind.SessionStart)]
+    [InlineData(HookEventKind.UserPromptSubmit)]
+    public async Task Identity_resolver_claims_the_focused_active_terminal_for_user_events(
+        HookEventKind eventKind)
+    {
+        WriteBridgeWithWindowState(
+            "one",
+            26101,
+            true,
+            new TerminalBridgeTerminal(
+                "terminal-one",
+                "",
+                "PowerShell one",
+                26100,
+                @"C:\Users\admin"),
+            new TerminalBridgeTerminal(
+                "terminal-two",
+                "active-terminal-token",
+                "PowerShell two",
+                26101,
+                @"C:\Users\admin"));
+
+        var result = await new TerminalIdentityResolver(_paths).ResolveAsync(new HookEvent
+        {
+            Kind = eventKind,
+            SessionId = "session-in-active-terminal",
+            WorkingDirectory = @"C:\Users\admin"
+        });
+
+        Assert.True(result.HasIdentity);
+        Assert.Equal("active-terminal-token", result.TerminalToken);
+        Assert.Equal(26101, result.TerminalProcessId);
+        Assert.Equal("focusedActiveTerminal", result.MatchKind);
+    }
+
+    [Theory]
+    [InlineData(HookEventKind.SessionStart)]
+    [InlineData(HookEventKind.UserPromptSubmit)]
+    public async Task Identity_resolver_claims_active_terminal_when_shell_cwd_is_missing(
+        HookEventKind eventKind)
+    {
+        WriteBridgeWithWindowState(
+            "one",
+            26101,
+            true,
+            [@"D:\ws\starry1000_dev_rpt"],
+            new TerminalBridgeTerminal(
+                "terminal-one",
+                "ordinary-terminal-token",
+                "bash",
+                26101,
+                ""));
+
+        var result = await new TerminalIdentityResolver(_paths).ResolveAsync(new HookEvent
+        {
+            Kind = eventKind,
+            SessionId = "session-in-git-bash",
+            WorkingDirectory = @"D:\ws\starry1000_dev_rpt"
+        });
+
+        Assert.True(result.HasIdentity);
+        Assert.Equal("ordinary-terminal-token", result.TerminalToken);
+        Assert.Equal(26101, result.TerminalProcessId);
+        Assert.Equal("focusedActiveTerminal", result.MatchKind);
+    }
+
+    [Fact]
+    public async Task Identity_resolver_does_not_claim_the_active_terminal_for_background_events()
+    {
+        WriteBridgeWithWindowState(
+            "one",
+            26101,
+            true,
+            new TerminalBridgeTerminal(
+                "terminal-one",
+                "",
+                "PowerShell one",
+                26100,
+                @"C:\Users\admin"),
+            new TerminalBridgeTerminal(
+                "terminal-two",
+                "",
+                "PowerShell two",
+                26101,
+                @"C:\Users\admin"));
+
+        var result = await new TerminalIdentityResolver(_paths).ResolveAsync(new HookEvent
+        {
+            Kind = HookEventKind.Activity,
+            SessionId = "background-session",
+            WorkingDirectory = @"C:\Users\admin"
+        });
+
+        Assert.False(result.HasIdentity);
+        Assert.Equal("noMatch", result.MatchKind);
+    }
+
+    [Fact]
+    public async Task Identity_resolver_does_not_guess_between_focused_active_terminals()
+    {
+        WriteBridgeWithWindowState(
+            "one",
+            26100,
+            true,
+            new TerminalBridgeTerminal(
+                "terminal-one",
+                "",
+                "PowerShell one",
+                26100,
+                @"C:\Users\admin"));
+        WriteBridgeWithWindowState(
+            "two",
+            26101,
+            true,
+            new TerminalBridgeTerminal(
+                "terminal-two",
+                "",
+                "PowerShell two",
+                26101,
+                @"C:\Users\admin"));
+
+        var result = await new TerminalIdentityResolver(_paths).ResolveAsync(new HookEvent
+        {
+            Kind = HookEventKind.UserPromptSubmit,
+            SessionId = "ambiguous-session",
             WorkingDirectory = @"C:\Users\admin"
         });
 
@@ -419,6 +553,19 @@ public sealed class TerminalSessionLifecycleTests : IDisposable
         int activeTerminalProcessId,
         bool windowFocused,
         params TerminalBridgeTerminal[] terminals)
+        => WriteBridgeWithWindowState(
+            bridgeId,
+            activeTerminalProcessId,
+            windowFocused,
+            [],
+            terminals);
+
+    private void WriteBridgeWithWindowState(
+        string bridgeId,
+        int activeTerminalProcessId,
+        bool windowFocused,
+        IReadOnlyList<string> workspaceFolders,
+        params TerminalBridgeTerminal[] terminals)
     {
         var registration = new TerminalBridgeRegistration(
             3,
@@ -426,7 +573,7 @@ public sealed class TerminalSessionLifecycleTests : IDisposable
             123,
             DateTimeOffset.UtcNow,
             "",
-            [],
+            workspaceFolders,
             terminals,
             activeTerminalProcessId,
             windowFocused);

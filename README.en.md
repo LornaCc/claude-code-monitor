@@ -6,7 +6,7 @@ CC Monitor is a Windows desktop monitor for Claude Code. It collects sessions fr
 
 ![CC Monitor session dashboard](docs/images/cc-monitor.png)
 
-## What is new in v0.4.2
+## Features
 
 ### Multi-session status monitoring
 
@@ -19,19 +19,21 @@ CC Monitor is a Windows desktop monitor for Claude Code. It collects sessions fr
 
 ### Precise VS Code window and terminal focusing
 
-- Every VS Code window publishes its workspace, terminal PID, cwd, stable token, and active terminal through Terminal Bridge. CC Monitor no longer guesses a terminal PID from the Hook process tree.
+- Every VS Code window publishes its workspace, terminal PID, cwd, stable token, and active terminal through Terminal Bridge. Every ordinary terminal receives a unique Bridge token, so CC Monitor no longer guesses a terminal PID from the Hook process tree.
+- Run `claude` directly in any ordinary terminal. The first `SessionStart` or `UserPromptSubmit` automatically claims the active terminal in the focused window and saves its token and PID; Managed Terminal and manual Bind are not prerequisites.
 - Terminal selection and native window activation are separate stages. The extension selects the terminal first; the desktop app then brings the selected VS Code window forward.
 - When a workspace or cwd contains several terminals or sessions, explicit bindings and stable tokens take priority. Ambiguous requests report no match instead of selecting an arbitrary first VS Code window.
 - If VS Code does not expose a native-window focus command, the app uses a Win32 fallback. Focusing preserves geometry: maximized windows remain maximized, normal and snapped windows keep their size and position, and only genuinely minimized windows are restored.
 - Bridge results distinguish `matched`, `noMatch`, and `bridgeNotRunning`. Logs include the request, match strategy, target bridge, and native activation result.
 
-### Three terminal association strategies
+### Terminal association strategies
 
 Matching proceeds from most to least reliable:
 
-1. **Manual binding**: choose **Bind terminal…** from a session menu, then run **CC Monitor: Bind Active Terminal to Session** in the target VS Code terminal.
-2. **Stable terminal token**: run **CC Monitor: Create Managed Claude Terminal**. The token belongs to the terminal and does not depend on a changing Claude session ID.
-3. **Safe cwd/workspace matching**: existing terminals remain supported through exact cwd and nearest parent/child matches constrained by workspace boundaries. A focus occurs only when the result is unique.
+1. **Automatic Bridge token**: the extension assigns every terminal a unique token, and the Hook automatically claims the active terminal when Claude starts or receives a prompt.
+2. **Managed environment token**: optionally run **CC Monitor: Create Managed Claude Terminal**. Its environment token is inherited at Claude startup, but this is not required for normal use.
+3. **Manual binding fallback**: use **Bind terminal…** and **CC Monitor: Bind Active Terminal to Session** only when automatic claiming cannot identify one terminal safely.
+4. **Safe cwd/workspace bootstrap**: terminal cwd or workspace boundaries constrain the initial claim; subsequent focusing uses the saved token/PID.
 
 To migrate an existing terminal, run **CC Monitor: Migrate Active Terminal**. The extension creates a tokenized replacement at the same cwd and starts Claude while leaving the old terminal open.
 
@@ -53,7 +55,7 @@ The Windows x64 package is self-contained; .NET Runtime and Node.js are not requ
 2. Double-click `Install-CCMonitor.cmd`.
 3. Wait for the installer to report success.
 4. Run **Developer: Reload Window** in every open VS Code window.
-5. Prefer **CC Monitor: Create Managed Claude Terminal** before starting Claude Code.
+5. Run `claude` normally in any VS Code integrated terminal. Managed Terminal and manual Bind are optional.
 
 The installer stops every older CC Monitor instance, installs v0.4.2 under `%LOCALAPPDATA%\Programs\CCMonitor\0.4.2`, repoints Claude Code Hooks and StatusLine, force-installs and verifies Terminal Bridge 0.4.2, updates Start menu and Desktop shortcuts, and starts only the new build. Older directories may remain for Claude Code processes that have not reloaded yet, but installer-managed Hooks, shortcuts, and running processes point to the new build.
 
@@ -101,9 +103,9 @@ Useful diagnostics:
 
 ## Troubleshooting
 
-- **Terminal Bridge is not running**: verify extension 0.4.2 and run **Developer: Reload Window** in every relevant VS Code window.
-- **Terminal not found**: activate the target terminal, use **Bind terminal…** on the session, then run **Bind Active Terminal to Session** in VS Code.
-- **Several terminals share one cwd**: use a Managed Terminal or manual binding. CC Monitor intentionally refuses ambiguous random selection.
+- **Terminal Bridge is not running**: verify the latest extension included in the release package and run **Developer: Reload Window** in every relevant VS Code window.
+- **Terminal not found**: activate the target terminal and submit one prompt so the session can claim it automatically. Use **Bind terminal…** only if it remains ambiguous.
+- **Several terminals share one cwd**: `SessionStart`/`UserPromptSubmit` claims the active terminal in the focused window. Manual binding is required only when no unique claim is safe.
 - **Status does not change**: inspect `/hooks` in Claude Code and the Hook and StatusLine logs.
 - **Hook reports `InvalidJson`**: reinstall the latest Hooks. Enable `CCMONITOR_DEBUG_HOOKS=1` only when local raw payload capture is acceptable.
 - **A window does not come forward**: inspect `bridgeWindowFocused`, `windowActivated`, `windowInitialState`, and `windowRestoreInvoked` in the App log.

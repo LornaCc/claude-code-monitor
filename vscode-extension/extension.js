@@ -4,6 +4,7 @@ const os = require('os');
 const path = require('path');
 const vscode = require('vscode');
 const { normalizePath, selectLegacyTerminal } = require('./terminal-matcher');
+const { selectRecoverableToken } = require('./terminal-token');
 
 const rootDirectory = path.join(os.homedir(), '.cc-monitor');
 const requestFile = path.join(rootDirectory, 'focus-terminal.json');
@@ -15,6 +16,7 @@ const terminalBindingsDirectory = path.join(rootDirectory, 'terminal-bindings');
 const sessionsDirectory = path.join(rootDirectory, 'sessions');
 const maxRequestAgeMs = 15000;
 const heartbeatIntervalMs = 2000;
+const requestPollIntervalMs = 250;
 const terminalTokenEnvironmentVariable = 'CCMONITOR_TERMINAL_TOKEN';
 
 /** @param {vscode.ExtensionContext} context */
@@ -162,6 +164,7 @@ function activate(context) {
 
   const processRequest = async (explicitRequest) => {
     let request = explicitRequest;
+    let handledRequest = false;
     try {
       if (!request) {
         request = JSON.parse(await fs.promises.readFile(requestFile, 'utf8'));
@@ -185,6 +188,7 @@ function activate(context) {
       }
 
       lastRequestId = request.requestId;
+      handledRequest = true;
       const match = await findTerminal(request, managedTokens, output);
       if (!match.terminal) {
         await writeResult(request, {
@@ -224,7 +228,9 @@ function activate(context) {
         }).catch(() => undefined);
       }
     } finally {
-      refreshRegistration();
+      if (handledRequest) {
+        refreshRegistration();
+      }
     }
   };
 
@@ -240,12 +246,19 @@ function activate(context) {
       scheduleRequest();
     }
   });
+  watcher.on('error', (error) => {
+    output.appendLine(
+      `Focus request watcher stopped (${formatError(error)}); polling remains active.`
+    );
+  });
   const heartbeatTimer = setInterval(refreshRegistration, heartbeatIntervalMs);
+  const requestPollTimer = setInterval(processRequest, requestPollIntervalMs);
 
   context.subscriptions.push(
     output,
     { dispose: () => watcher.close() },
     { dispose: () => clearInterval(heartbeatTimer) },
+    { dispose: () => clearInterval(requestPollTimer) },
     { dispose: () => clearTimeout(debounceTimer) },
     {
       dispose: () => {
@@ -327,9 +340,10 @@ async function focusBridgeWindow() {
 async function snapshotTerminal(terminal, managedTokens, output) {
   const processId = await terminal.processId;
   const terminalToken = await resolveTerminalToken(terminal, processId, managedTokens);
+  const workingDirectory = terminal.shellIntegration?.cwd?.fsPath || '';
   if (terminalToken) {
     managedTokens.set(terminal, terminalToken);
-    rememberTokenBinding(terminal, terminalToken, processId)
+    rememberTokenBinding(terminal, terminalToken, processId, workingDirectory)
       .catch((error) => output.appendLine(`Token binding refresh failed: ${formatError(error)}`));
   }
   return {
@@ -339,7 +353,7 @@ async function snapshotTerminal(terminal, managedTokens, output) {
     terminalToken,
     name: terminal.name,
     processId,
-    workingDirectory: terminal.shellIntegration?.cwd?.fsPath || ''
+    workingDirectory
   };
 }
 
@@ -432,34 +446,50 @@ async function resolveTerminalToken(terminal, processId, managedTokens) {
     return remembered;
   }
 
+  const environmentToken = readEnvironmentToken(terminal);
+  if (environmentToken) {
+    return environmentToken;
+  }
+
+  const recovered = await recoverTokenBinding(terminal, processId);
+  return recovered || crypto.randomUUID().replace(/-/g, '');
+}
+
+function readEnvironmentToken(terminal) {
   const environment = terminal.creationOptions?.env;
   if (!environment || typeof environment !== 'object') {
-    return recoverTokenBinding(terminal, processId);
+    return '';
   }
 
   const value = environment[terminalTokenEnvironmentVariable]
     || environment[terminalTokenEnvironmentVariable.toLowerCase()];
-  if (typeof value === 'string' && value) {
-    return value;
-  }
-
-  return recoverTokenBinding(terminal, processId);
+  return typeof value === 'string' ? value : '';
 }
 
-async function rememberTokenBinding(terminal, terminalToken, processId) {
+async function rememberTokenBinding(
+  terminal,
+  terminalToken,
+  processId,
+  workingDirectory = ''
+) {
   if (!terminalToken || !processId) {
     return;
   }
 
+  const environmentToken = normalizeToken(readEnvironmentToken(terminal));
   const payload = {
     terminalToken,
     processId,
     terminalName: terminal.name,
+    workingDirectory: normalizePath(workingDirectory),
     workspaceName: vscode.workspace.name || '',
     workspaceFolders: (vscode.workspace.workspaceFolders || []).map(
       (folder) => normalizePath(folder.uri.fsPath)
     ),
-    updatedAtUtc: new Date().toISOString()
+    updatedAtUtc: new Date().toISOString(),
+    bindingKind: environmentToken === normalizeToken(terminalToken)
+      ? 'managedEnvironment'
+      : 'bridgeAssigned'
   };
   await writeAtomic(
     path.join(tokenBindingsDirectory, `${terminalToken}.json`),
@@ -482,29 +512,24 @@ async function recoverTokenBinding(terminal, processId) {
     throw error;
   }
 
-  const workspaceFolders = (vscode.workspace.workspaceFolders || [])
-    .map((folder) => normalizePath(folder.uri.fsPath))
-    .sort();
+  const bindings = [];
   for (const fileName of fileNames.filter((name) => name.endsWith('.json'))) {
     try {
-      const binding = JSON.parse(
+      bindings.push(JSON.parse(
         await fs.promises.readFile(path.join(tokenBindingsDirectory, fileName), 'utf8')
-      );
-      const token = normalizeToken(binding.terminalToken);
-      const tokenPrefix = token.slice(0, 8);
-      const bindingFolders = (binding.workspaceFolders || []).map(normalizePath).sort();
-      if (binding.processId === processId
-        && tokenPrefix
-        && terminal.name.includes(`[${tokenPrefix}]`)
-        && JSON.stringify(bindingFolders) === JSON.stringify(workspaceFolders)) {
-        return binding.terminalToken;
-      }
+      ));
     } catch {
       // Ignore stale or partially written binding files.
     }
   }
 
-  return '';
+  return selectRecoverableToken(bindings, {
+    processId,
+    name: terminal.name,
+    workingDirectory: terminal.shellIntegration?.cwd?.fsPath || '',
+    workspaceFolders: (vscode.workspace.workspaceFolders || [])
+      .map((folder) => folder.uri.fsPath)
+  });
 }
 
 async function removeTokenBinding(terminal, managedTokens) {
