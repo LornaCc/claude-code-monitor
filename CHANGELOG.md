@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.3 - Unreleased
+## 0.5.2 - 2026-07-24
 
 - Assigned a persistent Bridge token to every ordinary VS Code terminal; Managed Terminal is no longer required for reliable token-based focusing.
 - Automatically claimed the compatible active terminal in the focused VS Code window on `SessionStart` and `UserPromptSubmit`, preserving both token and PID.

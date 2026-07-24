@@ -47,7 +47,7 @@ To migrate an existing terminal, run **CC Monitor: Migrate Active Terminal**. Th
 
 ## Download and installation
 
-Download `CCMonitor-v0.4.2-win-x64.zip` from [Gitea Releases](https://gitea.lan.fasteurai.com/linruyue/claude-code-monitor-desktop/releases) or [GitHub Releases](https://github.com/LornaCc/claude-code-monitor/releases).
+Download `CCMonitor-v0.5.2-win-x64.zip` from [Gitea Releases](https://gitea.lan.fasteurai.com/linruyue/claude-code-monitor-desktop/releases) or [GitHub Releases](https://github.com/LornaCc/claude-code-monitor/releases).
 
 The Windows x64 package is self-contained; .NET Runtime and Node.js are not required.
 
@@ -57,7 +57,7 @@ The Windows x64 package is self-contained; .NET Runtime and Node.js are not requ
 4. Run **Developer: Reload Window** in every open VS Code window.
 5. Run `claude` normally in any VS Code integrated terminal. Managed Terminal and manual Bind are optional.
 
-The installer stops every older CC Monitor instance, installs v0.4.2 under `%LOCALAPPDATA%\Programs\CCMonitor\0.4.2`, repoints Claude Code Hooks and StatusLine, force-installs and verifies Terminal Bridge 0.4.2, updates Start menu and Desktop shortcuts, and starts only the new build. Older directories may remain for Claude Code processes that have not reloaded yet, but installer-managed Hooks, shortcuts, and running processes point to the new build.
+The installer stops every older CC Monitor instance, installs v0.5.2 under `%LOCALAPPDATA%\Programs\CCMonitor\0.5.2`, repoints Claude Code Hooks and StatusLine, force-installs and verifies Terminal Bridge 0.5.2, updates Start menu and Desktop shortcuts, and starts only the new build. Older directories may remain for Claude Code processes that have not reloaded yet, but installer-managed Hooks, shortcuts, and running processes point to the new build.
 
 To reinstall Hooks only, use **Reinstall Hooks** in Settings or run:
 
