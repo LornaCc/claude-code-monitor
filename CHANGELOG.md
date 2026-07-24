@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2 - 2026-07-23
+
+- Preserved and migrated terminal identity across Claude Code `/clear`.
+- Automatically refreshed a session's window binding after its terminal was moved to another VS Code window and successfully focused there.
+- Hardened the one-click upgrade path: release-derived versioning, App/Hook/StatusLine version checks, exclusive Hook path verification, exact VSIX verification, and Start menu/Desktop shortcut replacement.
+
 ## 0.4.1 - 2026-07-23
 
 - Reworked VS Code terminal targeting around per-window bridge registrations, explicit terminal bindings, stable terminal tokens, and safe cwd/workspace matching.

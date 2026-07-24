@@ -13,6 +13,8 @@ public sealed record HookEvent
     public string? Prompt { get; init; }
     public string? ToolName { get; init; }
     public string? NotificationType { get; init; }
+    public string? SessionStartSource { get; init; }
+    public string? SessionEndReason { get; init; }
     public JsonDocument? RawJson { get; init; }
     public bool WasRecovered { get; init; }
     public string? ParseError { get; init; }

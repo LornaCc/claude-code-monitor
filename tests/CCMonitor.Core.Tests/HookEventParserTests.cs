@@ -37,6 +37,18 @@ public sealed class HookEventParserTests
         Assert.Equal(HookEventKind.NotificationIdlePrompt, parsed.Kind);
     }
 
+    [Fact]
+    public void Parses_clear_session_lifecycle_fields()
+    {
+        var start = _parser.Parse(
+            """{"hook_event_name":"SessionStart","session_id":"new","cwd":"C:\\work\\app","source":"clear"}""");
+        var end = _parser.Parse(
+            """{"hook_event_name":"SessionEnd","session_id":"old","cwd":"C:\\work\\app","reason":"clear"}""");
+
+        Assert.Equal("clear", start.SessionStartSource);
+        Assert.Equal("clear", end.SessionEndReason);
+    }
+
     [Theory]
     [InlineData("interrupted")]
     [InlineData("cancelled")]

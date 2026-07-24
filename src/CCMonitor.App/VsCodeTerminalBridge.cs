@@ -106,10 +106,36 @@ public sealed class VsCodeTerminalBridge
             var result = TryReadResult();
             if (result?.RequestId == request.RequestId)
             {
-                return result with
+                var completed = result with
                 {
                     LiveBridgeCount = selection.LiveBridgeCount
                 };
+                var refreshedBinding = CreateRefreshedBinding(
+                    manualBinding,
+                    completed,
+                    selection.Bridge.BridgeId,
+                    workingDirectory,
+                    DateTimeOffset.UtcNow);
+                if (refreshedBinding is null)
+                {
+                    return completed;
+                }
+
+                try
+                {
+                    _bindingStore.Save(refreshedBinding);
+                    return completed with
+                    {
+                        BindingRefresh = $"updated:{manualBinding!.BridgeId}->{refreshedBinding.BridgeId}"
+                    };
+                }
+                catch (Exception exception)
+                {
+                    return completed with
+                    {
+                        BindingRefresh = $"failed:{exception.GetType().Name}"
+                    };
+                }
             }
         }
 
@@ -124,6 +150,61 @@ public sealed class VsCodeTerminalBridge
             $"Bridge {selection.Bridge.BridgeId} did not answer within the focus timeout.",
             selection.Bridge.BridgeId,
             selection.LiveBridgeCount);
+    }
+
+    internal static CCMonitor.Core.Models.ManualTerminalBinding? CreateRefreshedBinding(
+        CCMonitor.Core.Models.ManualTerminalBinding? binding,
+        TerminalFocusResult result,
+        string selectedBridgeId,
+        string workingDirectory,
+        DateTimeOffset now)
+    {
+        if (binding is null
+            || result.Status != TerminalFocusStatus.Matched
+            || string.IsNullOrWhiteSpace(selectedBridgeId))
+        {
+            return null;
+        }
+
+        var terminalToken = string.IsNullOrWhiteSpace(result.TerminalToken)
+            ? binding.TerminalToken
+            : result.TerminalToken;
+        var terminalProcessId = result.TerminalProcessId
+            ?? binding.TerminalProcessId;
+        var terminalName = string.IsNullOrWhiteSpace(result.TerminalName)
+            ? binding.TerminalName
+            : result.TerminalName;
+        var effectiveDirectory = string.IsNullOrWhiteSpace(workingDirectory)
+            ? binding.WorkingDirectory
+            : workingDirectory;
+        var changed = !string.Equals(
+                binding.BridgeId,
+                selectedBridgeId,
+                StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(
+                binding.TerminalToken,
+                terminalToken,
+                StringComparison.OrdinalIgnoreCase)
+            || binding.TerminalProcessId != terminalProcessId
+            || !string.Equals(binding.TerminalName, terminalName, StringComparison.Ordinal)
+            || !string.Equals(
+                TerminalBridgeRegistry.NormalizePath(binding.WorkingDirectory),
+                TerminalBridgeRegistry.NormalizePath(effectiveDirectory),
+                StringComparison.OrdinalIgnoreCase);
+        if (!changed)
+        {
+            return null;
+        }
+
+        return binding with
+        {
+            BridgeId = selectedBridgeId,
+            TerminalToken = terminalToken,
+            TerminalProcessId = terminalProcessId,
+            TerminalName = terminalName,
+            WorkingDirectory = effectiveDirectory,
+            UpdatedAtUtc = now.ToUniversalTime()
+        };
     }
 
     public void PrepareManualBinding(
@@ -201,4 +282,6 @@ public sealed record TerminalFocusResult(
     string BridgeId,
     int LiveBridgeCount = 0,
     bool? WindowFocused = null,
-    string WindowFocusReason = "");
+    string WindowFocusReason = "",
+    string TerminalToken = "",
+    string BindingRefresh = "");

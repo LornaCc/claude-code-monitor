@@ -55,7 +55,32 @@ try
     var config = new MonitorConfigStore(paths).LoadOrCreate();
     var store = new ClaudeSessionStateStore(paths);
     var stateMachine = new ClaudeSessionStateMachine();
+    var bindingStore = new ManualTerminalBindingStore(paths);
     var terminalIdentity = await new TerminalIdentityResolver(paths).ResolveAsync(hookEvent);
+    ClearSessionBindingMigration? clearMigration = null;
+    if (!terminalIdentity.HasIdentity
+        && hookEvent.Kind == HookEventKind.SessionStart
+        && string.Equals(
+            hookEvent.SessionStartSource,
+            "clear",
+            StringComparison.OrdinalIgnoreCase))
+    {
+        clearMigration = await new ClearSessionTerminalBindingMigrator(paths)
+            .TryMigrateAsync(hookEvent);
+        if (clearMigration is not null)
+        {
+            terminalIdentity = new TerminalIdentityResolution(
+                clearMigration.Binding.TerminalToken,
+                clearMigration.Binding.TerminalProcessId,
+                "clearSessionBinding",
+                $"Inherited the terminal binding from session {Short(clearMigration.PreviousSessionId)} after /clear.");
+            logger.Info(
+                $"session={Short(hookEvent.SessionId)} inheritedBindingFrom={Short(clearMigration.PreviousSessionId)} " +
+                $"terminalPid={clearMigration.Binding.TerminalProcessId?.ToString() ?? "none"} " +
+                $"terminalToken={ShortToken(clearMigration.Binding.TerminalToken)} source=clear");
+        }
+    }
+
     hookEvent = hookEvent with
     {
         TerminalToken = string.IsNullOrWhiteSpace(terminalIdentity.TerminalToken)
@@ -71,6 +96,22 @@ try
         {
             currentState = await store.GetOrCreateAsync(hookEvent.SessionId, hookEvent.WorkingDirectory);
             var oldStatus = currentState.Status;
+            if (hookEvent.Kind == HookEventKind.SessionEnd
+                && string.Equals(
+                    hookEvent.SessionEndReason,
+                    "clear",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                var preservedBinding = bindingStore.PreserveForClear(currentState);
+                if (preservedBinding is not null)
+                {
+                    logger.Info(
+                        $"session={Short(currentState.SessionId)} preservedBindingForClear " +
+                        $"terminalPid={preservedBinding.TerminalProcessId?.ToString() ?? "none"} " +
+                        $"terminalToken={ShortToken(preservedBinding.TerminalToken)}");
+                }
+            }
+
             stateMachine.Apply(currentState, hookEvent, config);
             await store.SaveAtomicAsync(currentState);
             logger.Info(
@@ -103,9 +144,13 @@ try
         await ProcessEventAsync();
     }
 
-    if (hookEvent.Kind == HookEventKind.SessionEnd)
+    if (hookEvent.Kind == HookEventKind.SessionEnd
+        && !string.Equals(
+            hookEvent.SessionEndReason,
+            "clear",
+            StringComparison.OrdinalIgnoreCase))
     {
-        new ManualTerminalBindingStore(paths).Delete(hookEvent.SessionId);
+        bindingStore.Delete(hookEvent.SessionId);
     }
 }
 catch (Exception ex)

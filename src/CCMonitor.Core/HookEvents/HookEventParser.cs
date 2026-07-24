@@ -72,6 +72,8 @@ public sealed class HookEventParser
             ?? GetString(root, "notificationType")
             ?? GetString(root, "matcher")
             ?? GetString(root, "message");
+        var sessionStartSource = GetString(root, "source");
+        var sessionEndReason = GetString(root, "reason");
 
         return new HookEvent
         {
@@ -82,6 +84,8 @@ public sealed class HookEventParser
             Prompt = prompt,
             ToolName = toolName,
             NotificationType = notificationType,
+            SessionStartSource = sessionStartSource,
+            SessionEndReason = sessionEndReason,
             RawJson = document,
             WasRecovered = wasRecovered,
             ParseError = parseError
@@ -165,7 +169,9 @@ public sealed class HookEventParser
             ToolName = ExtractJsonString(input, "tool_name")
                 ?? ExtractJsonString(input, "toolName")
                 ?? ExtractJsonString(input, "tool"),
-            NotificationType = notificationType
+            NotificationType = notificationType,
+            SessionStartSource = ExtractJsonString(input, "source"),
+            SessionEndReason = ExtractJsonString(input, "reason")
         };
         return recovered.Kind != HookEventKind.Unknown;
     }

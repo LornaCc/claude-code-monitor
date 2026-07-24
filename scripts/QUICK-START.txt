@@ -1,4 +1,4 @@
-CC Monitor 0.4.1 - Windows x64
+CC Monitor 0.4.2 - Windows x64
 ================================
 
 INSTALL
@@ -9,10 +9,10 @@ INSTALL
 
 WHAT THE INSTALLER UPDATES
 - Stops every older CC Monitor App instance.
-- Installs this build to %LOCALAPPDATA%\Programs\CCMonitor\0.4.1.
+- Installs this build to %LOCALAPPDATA%\Programs\CCMonitor\0.4.2.
 - Repoints all Claude Code hooks and StatusLine to this build.
-- Force-installs and verifies Terminal Bridge 0.4.1.
-- Updates the Start menu shortcut and starts this build.
+- Force-installs and verifies Terminal Bridge 0.4.2.
+- Updates Start menu and Desktop shortcuts and starts this build.
 
 RECOMMENDED TERMINAL SETUP
 - Use "CC Monitor: Create Managed Claude Terminal" for a tokenized terminal.

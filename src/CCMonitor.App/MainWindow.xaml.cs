@@ -437,7 +437,8 @@ public partial class MainWindow : Window
                 $"terminal focus result session={session.SessionId} status={terminalResult.Status} " +
                 $"bridge={terminalResult.BridgeId} liveBridges={terminalResult.LiveBridgeCount} " +
                 $"terminalToken={ShortToken(session.TerminalToken)} " +
-                $"match={terminalResult.MatchKind} reason={terminalResult.Reason}");
+                $"match={terminalResult.MatchKind} bindingRefresh={terminalResult.BindingRefresh} " +
+                $"reason={terminalResult.Reason}");
 
             if (terminalResult.Status == TerminalFocusStatus.Matched)
             {

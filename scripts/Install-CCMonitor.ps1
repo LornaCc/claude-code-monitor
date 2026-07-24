@@ -9,9 +9,20 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$releaseVersion = "0.4.1"
-$expectedExtension = "ccmonitor.cc-monitor-terminal-bridge@$releaseVersion"
 $packageRoot = $PSScriptRoot
+$packageAppPath = Join-Path $packageRoot "CCMonitor.App.exe"
+if (-not (Test-Path -LiteralPath $packageAppPath)) {
+    throw "The release package does not contain CCMonitor.App.exe."
+}
+
+$packageProductVersion = (Get-Item -LiteralPath $packageAppPath).VersionInfo.ProductVersion
+$versionMatch = [regex]::Match($packageProductVersion, '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?')
+if (-not $versionMatch.Success) {
+    throw "Could not determine the release version from CCMonitor.App.exe: $packageProductVersion"
+}
+
+$releaseVersion = $versionMatch.Value
+$expectedExtension = "ccmonitor.cc-monitor-terminal-bridge@$releaseVersion"
 if ([string]::IsNullOrWhiteSpace($InstallDirectory)) {
     $InstallDirectory = Join-Path $env:LOCALAPPDATA "Programs\CCMonitor\$releaseVersion"
 }
@@ -62,6 +73,18 @@ if (-not $installedProductVersion.StartsWith($releaseVersion, [System.StringComp
     throw "Unexpected App version after copy: $installedProductVersion"
 }
 
+foreach ($componentName in @("CCMonitor.Hook.exe", "CCMonitor.StatusLine.exe")) {
+    $componentPath = Join-Path $installDirectory $componentName
+    if (-not (Test-Path -LiteralPath $componentPath)) {
+        throw "$componentName was not copied to $installDirectory"
+    }
+
+    $componentVersion = (Get-Item -LiteralPath $componentPath).VersionInfo.ProductVersion
+    if (-not $componentVersion.StartsWith($releaseVersion, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Unexpected $componentName version after copy: $componentVersion"
+    }
+}
+
 if (-not $SkipHooks) {
     $hookInstall = Start-Process -FilePath $appPath `
         -ArgumentList "--install-hooks" `
@@ -71,15 +94,50 @@ if (-not $SkipHooks) {
     if ($hookInstall.ExitCode -ne 0) {
         throw "Hook installation failed with exit code $($hookInstall.ExitCode)"
     }
+
+    function ConvertTo-ClaudeShellCommand([string]$ExecutablePath) {
+        $fullPath = [System.IO.Path]::GetFullPath($ExecutablePath).Replace('\', '/')
+        if ($fullPath -match '^([A-Za-z]):/(.*)$') {
+            $fullPath = "/$($Matches[1].ToLowerInvariant())/$($Matches[2])"
+        }
+        return "'$fullPath'"
+    }
+
+    $settingsPath = Join-Path $env:USERPROFILE ".claude\settings.json"
+    $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+    $expectedHookCommand = ConvertTo-ClaudeShellCommand (Join-Path $installDirectory "CCMonitor.Hook.exe")
+    $expectedStatusLineCommand = ConvertTo-ClaudeShellCommand (Join-Path $installDirectory "CCMonitor.StatusLine.exe")
+    $installedHookCommands = @(
+        foreach ($eventProperty in $settings.hooks.PSObject.Properties) {
+            foreach ($entry in @($eventProperty.Value)) {
+                foreach ($hook in @($entry.hooks)) {
+                    if ($hook.type -eq "command") {
+                        [string]$hook.command
+                    }
+                }
+            }
+        }
+    )
+    $staleHookCommands = @(
+        $installedHookCommands |
+            Where-Object {
+                $_ -match 'CCMonitor\.Hook\.exe' -and
+                -not $_.Equals($expectedHookCommand, [System.StringComparison]::OrdinalIgnoreCase)
+            }
+    )
+    if (-not ($installedHookCommands -contains $expectedHookCommand) -or $staleHookCommands.Count -gt 0) {
+        throw "Claude Code hooks were not exclusively updated to $expectedHookCommand"
+    }
+    if ($settings.statusLine.command -ne $expectedStatusLineCommand) {
+        throw "Claude Code StatusLine was not updated to $expectedStatusLineCommand"
+    }
     Write-Host "Claude Code hooks and status line now point to this build."
 }
 
 if (-not $SkipVsCodeExtension) {
-    $vsix = Get-ChildItem -LiteralPath $installDirectory -Filter "cc-monitor-terminal-bridge-*.vsix" |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-    if ($null -eq $vsix) {
-        throw "The VS Code Terminal Bridge VSIX is missing."
+    $vsixPath = Join-Path $installDirectory "cc-monitor-terminal-bridge-$releaseVersion.vsix"
+    if (-not (Test-Path -LiteralPath $vsixPath)) {
+        throw "The expected VS Code Terminal Bridge VSIX is missing: $vsixPath"
     }
 
     $codeCli = $null
@@ -111,7 +169,7 @@ if (-not $SkipVsCodeExtension) {
         throw "VS Code CLI was not found. Install the included VSIX manually, then run this installer again with -SkipVsCodeExtension."
     }
 
-    & $codeCli --install-extension $vsix.FullName --force
+    & $codeCli --install-extension $vsixPath --force
     if ($LASTEXITCODE -ne 0) {
         throw "VS Code extension installation failed with exit code $LASTEXITCODE"
     }
@@ -124,15 +182,51 @@ if (-not $SkipVsCodeExtension) {
 }
 
 if (-not $SkipShortcut) {
+    function Set-CcMonitorShortcut([string]$ShortcutPath) {
+        $shortcutDirectory = Split-Path -Parent $ShortcutPath
+        New-Item -ItemType Directory -Path $shortcutDirectory -Force | Out-Null
+        $shortcut = $shell.CreateShortcut($ShortcutPath)
+        $shortcut.TargetPath = $appPath
+        $shortcut.WorkingDirectory = $installDirectory
+        $shortcut.IconLocation = "$appPath,0"
+        $shortcut.Description = "CC Monitor $releaseVersion"
+        $shortcut.Save()
+
+        $savedShortcut = $shell.CreateShortcut($ShortcutPath)
+        if (-not $savedShortcut.TargetPath.Equals($appPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Shortcut was not updated to the new build: $ShortcutPath"
+        }
+    }
+
     $startMenu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
-    $shortcutPath = Join-Path $startMenu "CC Monitor.lnk"
     $shell = New-Object -ComObject WScript.Shell
-    $shortcut = $shell.CreateShortcut($shortcutPath)
-    $shortcut.TargetPath = $appPath
-    $shortcut.WorkingDirectory = $installDirectory
-    $shortcut.IconLocation = "$appPath,0"
-    $shortcut.Save()
-    Write-Host "Start menu shortcut updated."
+    $shortcutPaths = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase)
+    [void]$shortcutPaths.Add((Join-Path $startMenu "CC Monitor.lnk"))
+
+    $desktopDirectory = [Environment]::GetFolderPath(
+        [Environment+SpecialFolder]::DesktopDirectory)
+    if (-not [string]::IsNullOrWhiteSpace($desktopDirectory)) {
+        [void]$shortcutPaths.Add((Join-Path $desktopDirectory "CC Monitor.lnk"))
+    }
+
+    foreach ($possibleDesktop in @(
+        (Join-Path $env:USERPROFILE "Desktop"),
+        $(if ($env:OneDrive) { Join-Path $env:OneDrive "Desktop" }),
+        $(if ($env:OneDriveConsumer) { Join-Path $env:OneDriveConsumer "Desktop" })
+    )) {
+        if ($possibleDesktop) {
+            $possibleShortcut = Join-Path $possibleDesktop "CC Monitor.lnk"
+            if (Test-Path -LiteralPath $possibleShortcut) {
+                [void]$shortcutPaths.Add($possibleShortcut)
+            }
+        }
+    }
+
+    foreach ($shortcutPath in $shortcutPaths) {
+        Set-CcMonitorShortcut $shortcutPath
+    }
+    Write-Host "Updated $($shortcutPaths.Count) Start menu/Desktop shortcut(s)."
 }
 
 if (-not $NoStart) {
@@ -143,6 +237,17 @@ if (-not $NoStart) {
         Select-Object -First 1
     if ($null -eq $newProcess) {
         throw "CC Monitor $releaseVersion did not stay running."
+    }
+
+    $unexpectedProcesses = @(
+        Get-Process CCMonitor.App -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Path -and
+                -not $_.Path.Equals($appPath, [System.StringComparison]::OrdinalIgnoreCase)
+            }
+    )
+    if ($unexpectedProcesses.Count -gt 0) {
+        throw "An older CC Monitor process is still running after installation."
     }
 }
 

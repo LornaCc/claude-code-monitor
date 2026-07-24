@@ -6,7 +6,7 @@ CC Monitor is a Windows desktop monitor for Claude Code. It collects sessions fr
 
 ![CC Monitor session dashboard](docs/images/cc-monitor.png)
 
-## What is new in v0.4.1
+## What is new in v0.4.2
 
 ### Multi-session status monitoring
 
@@ -45,7 +45,7 @@ To migrate an existing terminal, run **CC Monitor: Migrate Active Terminal**. Th
 
 ## Download and installation
 
-Download `CCMonitor-v0.4.1-win-x64.zip` from [Gitea Releases](https://gitea.lan.fasteurai.com/linruyue/claude-code-monitor-desktop/releases) or [GitHub Releases](https://github.com/LornaCc/claude-code-monitor/releases).
+Download `CCMonitor-v0.4.2-win-x64.zip` from [Gitea Releases](https://gitea.lan.fasteurai.com/linruyue/claude-code-monitor-desktop/releases) or [GitHub Releases](https://github.com/LornaCc/claude-code-monitor/releases).
 
 The Windows x64 package is self-contained; .NET Runtime and Node.js are not required.
 
@@ -55,7 +55,7 @@ The Windows x64 package is self-contained; .NET Runtime and Node.js are not requ
 4. Run **Developer: Reload Window** in every open VS Code window.
 5. Prefer **CC Monitor: Create Managed Claude Terminal** before starting Claude Code.
 
-The installer stops older CC Monitor instances, installs v0.4.1 under `%LOCALAPPDATA%\Programs\CCMonitor\0.4.1`, repoints Claude Code Hooks and StatusLine, force-installs and verifies Terminal Bridge 0.4.1, updates the Start menu shortcut, and starts the new build. Older directories can remain for rollback, but they are no longer running or referenced by Hooks.
+The installer stops every older CC Monitor instance, installs v0.4.2 under `%LOCALAPPDATA%\Programs\CCMonitor\0.4.2`, repoints Claude Code Hooks and StatusLine, force-installs and verifies Terminal Bridge 0.4.2, updates Start menu and Desktop shortcuts, and starts only the new build. Older directories may remain for Claude Code processes that have not reloaded yet, but installer-managed Hooks, shortcuts, and running processes point to the new build.
 
 To reinstall Hooks only, use **Reinstall Hooks** in Settings or run:
 
@@ -101,7 +101,7 @@ Useful diagnostics:
 
 ## Troubleshooting
 
-- **Terminal Bridge is not running**: verify extension 0.4.1 and run **Developer: Reload Window** in every relevant VS Code window.
+- **Terminal Bridge is not running**: verify extension 0.4.2 and run **Developer: Reload Window** in every relevant VS Code window.
 - **Terminal not found**: activate the target terminal, use **Bind terminal…** on the session, then run **Bind Active Terminal to Session** in VS Code.
 - **Several terminals share one cwd**: use a Managed Terminal or manual binding. CC Monitor intentionally refuses ambiguous random selection.
 - **Status does not change**: inspect `/hooks` in Claude Code and the Hook and StatusLine logs.
